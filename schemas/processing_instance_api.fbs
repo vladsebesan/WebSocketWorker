@@ -1,0 +1,960 @@
+include "types_common_api.fbs";
+
+namespace ProcessInstanceMessageApi;
+
+// session commands
+
+table SessionCreate {
+}
+
+table SessionCreateReply {
+}
+
+table SessionKeepalive {
+}
+
+table SessionKeepaliveReply {
+}
+
+table SessionDestroy {
+}
+
+table SessionDestroyReply {
+}
+
+// processing instance status commands
+
+enum SeverityLevel: uint32 {
+    OK,
+    WARNING,
+    ERROR_,
+}
+
+table StatusInfo {
+    start_time: string; // ISO-8601 (UTC)
+    severity_level: SeverityLevel;
+    message: string (required);
+}
+
+table ProcessingInstanceStatus
+{
+    processing_instance_id: string (required);
+    info: [StatusInfo] (required);
+}
+
+table ProcessingInstanceStatusGet
+{
+}
+
+table ProcessingInstanceStatusGetReply
+{
+    processingInstanceStatus: ProcessingInstanceStatus (required);
+}
+
+table ProcessingInstanceStatusSubscribe
+{
+}
+
+table ProcessingInstanceStatusSubscribeReply
+{
+    subscription_id: string (required);
+}
+
+table ProcessingInstanceStatusUnsubscribe
+{
+    subscription_id: string (required);
+}
+
+table ProcessingInstanceStatusUnsubscribeReply
+{
+}
+
+table ProcessingInstanceStatusNotify
+{
+    processingInstanceStatus: ProcessingInstanceStatus (required);
+}
+
+// persistence model commands
+
+table JobEntry {
+    id: string (required);
+    name: string;
+    description: string;
+    is_in_use: bool; // delete and load are not allowed if the job is in use
+}
+
+table SnapshotEntry {
+    id: string (required);
+    name: string;
+    description: string;
+    created_at: string; // ISO-8601 (UTC)
+    is_current_version: bool; // load, rename and delete snapshot are not allowed for the current version
+}
+
+table RecordRunEntry {
+    id: string (required);
+    run_number: uint64;
+    label: string (required);
+    good_bad_tag: string (required);
+    traffic_light_tag: string (required);
+    is_renamable: bool;
+    is_deletable: bool;
+}
+
+table RecordEntry {
+    id: string (required);
+    name: string (required);
+    created_at: string; // ISO-8601 (UTC)
+    is_ring_buffer: bool;
+    is_compatible: bool;
+    is_renamable: bool;
+    is_deletable: bool;
+    runs: [RecordRunEntry] (required);
+}
+
+table RecordSettings {
+    playback_mode: bool;
+    ring_buffer: bool;
+    buffer_size: uint64;
+    active_record_id: string;
+}
+
+table RecordCaptureProgress {
+    is_recording: bool;
+    record_id: string;
+    progress_value: uint64;
+    progress_max: uint64;
+}
+
+table PersistenceModel {
+    processing_instance_name: string (required);
+    active_job_id: string (required);
+
+    undo_enabled: bool;
+    redo_enabled: bool;
+    snapshot_limit_reached: bool;
+
+    has_unsaved_changes: bool;
+
+    next_job_name: string (required);
+    next_snapshot_name: string (required);
+    next_record_name: string (required);
+
+    record_settings: RecordSettings (required);
+    record_capture_progress: RecordCaptureProgress (required);
+
+    jobs: [JobEntry] (required);
+    snapshots: [SnapshotEntry] (required);
+    records: [RecordEntry] (required);
+}
+
+table PersistenceModelGet {
+}
+
+table PersistenceModelGetReply {
+    persistence_model: PersistenceModel (required);
+}
+
+table PersistenceModelNotify
+{
+    persistence_model: PersistenceModel (required);
+}
+
+table PersistenceModelSubscribe {
+}
+
+table PersistenceModelSubscribeReply {
+    subscription_id: string (required);
+}
+
+table PersistenceModelUnsubscribe {
+    subscription_id: string (required);
+}
+
+table PersistenceModelUnsubscribeReply {
+}
+
+table Undo {
+}
+
+table UndoReply {
+}
+
+table Redo {
+}
+
+table RedoReply {
+}
+
+// persistence model - job commands
+
+table JobCreate {
+    name: string (required);
+    description: string;
+}
+
+table JobCreateReply {
+    id: string;
+    name_suggestion: string;
+}
+
+table JobDuplicate {
+    id: string (required);
+}
+
+table JobDuplicateReply {
+}
+
+table JobEdit {
+    id: string (required);
+    name: string;
+    description: string;
+}
+
+table JobEditReply {
+    name_suggestion: string;
+}
+
+table JobDelete {
+    id: string (required);
+}
+
+table JobDeleteReply {
+}
+
+table JobLoad {
+    id: string (required);
+}
+
+table JobLoadReply {
+}
+
+table JobExport {
+    id: string (required);
+    export_snapshots: bool;
+}
+
+table JobExportReply {
+    file_path: string (required);
+}
+
+table JobBackup {
+}
+
+table JobBackupReply {
+    file_path: string (required);
+}
+
+table JobImportOrRestore {
+    file_path: string (required);
+}
+
+table JobImportOrRestoreReply {
+}
+
+// persistence model - snapshot commands
+
+table SnapshotCreate {
+    name: string (required);
+    description: string (required);
+}
+
+table SnapshotCreateReply {
+    name_suggestion: string;
+}
+
+table SnapshotLoad {
+    id: string (required);
+}
+
+table SnapshotLoadReply {
+}
+
+table SnapshotEdit {
+    id: string (required);
+    name: string (required);
+    description: string (required);
+}
+
+table SnapshotEditReply {
+    name_suggestion: string;
+}
+
+table SnapshotImport {
+    file_path: string (required);
+}
+
+table SnapshotImportReply {
+}
+
+table SnapshotExport {
+    id: string (required);
+    export_snapshots: bool;
+}
+
+table SnapshotExportReply {
+    file_path: string (required);
+}
+
+table SnapshotDelete {
+    id: string (required);
+}
+
+table SnapshotDeleteReply {
+}
+
+// persistence model - record commands
+table RecordStartCapture
+{
+    name: string (required);
+    quantity: uint64;
+}
+
+table RecordStartCaptureReply
+{
+    name_suggestion: string;
+}
+
+table RecordStopCapture
+{
+    cancel: bool;
+}
+
+table RecordStopCaptureReply
+{
+}
+
+table RecordEdit
+{
+    id: string (required);
+    name: string (required);
+}
+
+table RecordEditReply
+{
+    name_suggestion: string;
+}
+
+table RecordDelete
+{
+    id: string (required);
+}
+
+table RecordDeleteReply
+{
+}
+
+table RecordSetSettings
+{
+    record_settings: RecordSettings (required);
+}
+
+table RecordSetSettingsReply
+{
+}
+
+table RecordImport {
+    file_path: string (required);
+}
+
+table RecordImportReply {
+}
+
+table RecordExport {
+    id: string (required);
+}
+
+table RecordExportReply {
+    file_path: string (required);
+}
+
+table RecordRunRun
+{
+    id: string (required);
+}
+
+table RecordRunRunReply
+{
+}
+
+table RecordRunEdit
+{
+    id: string (required);
+    label: string (required);
+}
+
+table RecordRunEditReply
+{
+}
+
+table RecordRunDelete
+{
+    id: string (required);
+}
+
+table RecordRunDeleteReply
+{
+}
+
+// toolbox commands
+
+table ToolboxGet {
+}
+
+table ToolboxEntry {
+    id: string (required);
+    name: string;
+    description: string;
+    icon_url: string;
+    category: [string];
+    module_type: string;
+    version: string;
+    licensed: bool;
+}
+
+table Status {
+    code: string (required);
+    error_message: string;
+}
+
+table ToolboxGetReply {
+    entries: [ToolboxEntry] (required);
+}
+
+table ToolboxSubscribe {
+}
+
+table ToolboxSubscribeReply {
+    subscription_id: string (required);
+}
+
+table ToolboxUnsubscribe {
+    subscription_id: string (required);
+}
+
+table ToolboxUnsubscribeReply {
+}
+
+table ToolboxNotify {
+    added_entries: [ToolboxEntry];
+    changed_entries: [ToolboxEntry];
+    removed_entries: [string];
+}
+
+// flow commands
+
+table FlowGet {
+}
+
+table FlowPort {
+    id: string (required);
+    name: string (required);
+    display_name: string;
+    name_suffix: string;
+    visibility: types_common_api.Visibility;
+    is_linkable: bool;
+}
+
+//the existance of this structure is to provide a workaround for https://github.com/google/flatbuffers/issues/7631
+//basically whenever we have changing collection of elements owning collections themselves, we need this to propagate
+//the granular changes within the innermost collections.
+//we decided not to follow this priciple on all other collections, in the hope that this will be fixed and merged into our
+//code. In that case by doing this only where we need, we reduce the workload to refactor
+table FlowPortCollection {
+    items: [FlowPort] (required);
+}
+
+enum FlowStartType: uint32 {
+    START,
+    NEW_RUN,
+    REPEAT_RUN,
+    STOP,
+}
+
+table FlowModuleEntry {
+    id: string (required);
+    name: string;
+    display_name: string;
+    module_type: string;
+    version: string;
+    input_ports: FlowPortCollection;
+    output_ports: FlowPortCollection;
+    position_x: double;
+    position_y: double;
+    is_currently_running: bool;
+}
+
+table FlowLinkEntry {
+    id: string (required);
+    source_module_id: string (required);
+    output_id: string (required);
+    target_module_id: string (required);
+    input_id: string (required);
+}
+
+table FlowGetReply {
+    modules: [FlowModuleEntry];
+    links: [FlowLinkEntry];
+    flow_state_details: FlowStateDetails (required);
+}
+
+table FlowSubscribe {
+}
+
+table FlowSubscribeReply {
+    subscription_id: string (required);
+}
+
+table FlowUnsubscribe {
+    subscription_id: string (required);
+}
+
+table FlowUnsubscribeReply {
+}
+
+table FlowStateDetails
+{
+    flow_start_type: FlowStartType;
+    is_start_allowed: bool;
+    is_new_run_allowed: bool;
+    is_repeat_run_allowed: bool;
+    is_stop_allowed: bool;
+    is_abort_allowed: bool;
+}
+
+table FlowNotify {
+    added_modules: [FlowModuleEntry];
+    changed_modules: [FlowModuleEntry];
+    removed_modules: [string];
+    added_links: [FlowLinkEntry];
+    removed_links: [string];
+    flow_state_details: FlowStateDetails (required);
+}
+
+table FlowAddModule {
+    toolbox_entry_id: string (required);
+    name: string;
+    position_x: double;
+    position_y: double;
+}
+
+table FlowAddModuleReply {
+    module_id: string (required);
+}
+
+table FlowRemoveModule {
+    module_id: string (required);
+}
+
+table FlowRemoveModuleReply {
+}
+
+table FlowAddLink {
+    source_module_id: string (required);
+    output_id: string (required);
+    target_module_id: string (required);
+    input_id: string (required);
+}
+
+table FlowAddLinkReply {
+    link_id: string (required);
+}
+
+table FlowRemoveLink {
+    link_id: string (required);
+}
+
+table FlowRemoveLinkReply {
+}
+
+table FlowNewRun {
+}
+
+table FlowNewRunReply {
+}
+
+table FlowRepeatRun {
+}
+
+table FlowRepeatRunReply {
+}
+
+table FlowStart {
+}
+
+table FlowStartReply {
+}
+
+table FlowStop {
+}
+
+table FlowStopReply {
+}
+
+table FlowAbort {
+}
+
+table FlowAbortReply {
+}
+
+table FlowMoveModule {
+    module_id: string (required);
+    position_x: double = 0;
+    position_y: double = 0;
+}
+
+table FlowMoveModuleReply {
+}
+
+table FlowRenameModule {
+    module_id: string (required);
+    name: string (required);
+}
+
+table FlowRenameModuleReply {
+}
+
+table ModuleSubscribe {
+    module_id: string (required);
+}
+
+table ModuleSubscribeReply {
+    subscription_id: string (required);
+}
+
+table ModuleUnsubscribe {
+    module_id: string (required);
+    subscription_id: string (required);
+}
+
+table ModuleUnsubscribeReply {
+}
+
+table ModuleRequest {
+    module_id: string (required);
+    type: string (required); // "Get" etc.
+    payload: [ubyte];
+}
+
+table ModuleReply {
+    type: string (required); // "GetReply" etc.
+    payload: [ubyte];
+}
+
+table ModuleNotify {
+    type: string (required); // "Notify" etc.
+    payload: [ubyte];
+}
+
+// json commands
+
+table GetJson {
+    // endpoint can be:
+    // {pi_id}/flow/mode
+    // {pi_id}/flow/modules/{module_id}/inputs/{field_id}/value
+    // {pi_id}/flow/modules/{module_id}/outputs/{field_id}/value
+    endpoint: string (required);
+}
+
+table GetJsonReply {
+    // { "value": "1234" }
+    // OR
+    // { "value": "base64 encoded binary (for images JPEG)" }
+    json_data: string (required);
+}
+
+table SetJson {
+    endpoint: string (required);
+    json_data: string (required);
+}
+
+table SetJsonReply {
+}
+
+table SubscribeJson {
+    // flow mode
+    // for fields only parameters
+    endpoint: string (required);
+}
+
+table SubscribeJsonReply {
+    endpoint: string (required);
+}
+
+table UnsubscribeJson {
+    endpoint: string (required);
+}
+
+table UnsubscribeJsonReply {
+    endpoint: string (required);
+}
+
+table JsonNotify {
+    endpoint: string (required);
+    json_data: string (required);
+}
+
+table SubcriptionEndedJsonNotify {
+    endpoint: string (required);
+}
+
+table ProcessingInstanceCloseNotify {
+    processing_instance_id: string (required);
+    reason: string (required);
+}
+
+// test commands
+
+table TestToolboxClear {
+}
+
+table TestToolboxReAddAll {
+}
+
+table TestToolboxLicenseAll {
+}
+
+table TestToolboxUnlicenseAll {
+}
+
+table TestFlowClear {
+}
+
+table UnknownCommand {
+    message_type: int;
+    message_name: string;
+}
+
+union RequestMessage {
+    // session requests
+    SessionCreate,
+    SessionKeepalive,
+    SessionDestroy,
+
+    // processing instance status
+    ProcessingInstanceStatusGet,
+    ProcessingInstanceStatusSubscribe,
+    ProcessingInstanceStatusUnsubscribe,
+
+    // persistence model requests
+    PersistenceModelGet,
+    PersistenceModelSubscribe,
+    PersistenceModelUnsubscribe,
+    Undo,
+    Redo,
+
+    // persistence model - job requests
+    JobCreate,
+    JobDuplicate,
+    JobEdit,
+    JobDelete,
+    JobLoad,
+    JobExport,
+    JobBackup,
+    JobImportOrRestore,
+
+    // persistence model - snapshot requests
+    SnapshotCreate,
+    SnapshotLoad,
+    SnapshotEdit,
+    SnapshotImport,
+    SnapshotExport,
+    SnapshotDelete,
+
+    // persistence model - record requests
+    RecordStartCapture,
+    RecordStopCapture,
+    RecordEdit,
+    RecordImport,
+    RecordExport,
+    RecordDelete,
+    RecordSetSettings,
+
+    // persistence model - record runs requests
+    RecordRunRun,
+    RecordRunEdit,
+    RecordRunDelete,
+
+    // toolbox requests
+    ToolboxGet,
+    ToolboxSubscribe,
+    ToolboxUnsubscribe,
+
+    // flow requests
+    FlowGet,
+    FlowSubscribe,
+    FlowUnsubscribe,
+    FlowAddModule,
+    FlowRemoveModule,
+    FlowAddLink,
+    FlowRemoveLink,
+    FlowMoveModule,
+    FlowRenameModule,
+    FlowNewRun,
+    FlowRepeatRun,
+    FlowStart,
+    FlowStop,
+    FlowAbort,
+
+    // module requests
+    ModuleSubscribe,
+    ModuleUnsubscribe,
+    ModuleRequest,
+
+    // json
+    GetJson,
+    SetJson,
+    SubscribeJson,
+    UnsubscribeJson,
+}
+
+union ReplyMessage {
+    // session replies
+    SessionCreateReply,
+    SessionKeepaliveReply,
+    SessionDestroyReply,
+
+    // processing instance status replies
+    ProcessingInstanceStatusGetReply,
+    ProcessingInstanceStatusSubscribeReply,
+    ProcessingInstanceStatusUnsubscribeReply,
+
+    // persistence model replies
+    PersistenceModelGetReply,
+    PersistenceModelSubscribeReply,
+    PersistenceModelUnsubscribeReply,
+    UndoReply,
+    RedoReply,
+
+    // persistence model - job replies
+    JobCreateReply,
+    JobDuplicateReply,
+    JobEditReply,
+    JobDeleteReply,
+    JobLoadReply,
+    JobExportReply,
+    JobBackupReply,
+    JobImportOrRestoreReply,
+
+    // persistence model - snapshot replies
+    SnapshotCreateReply,
+    SnapshotLoadReply,
+    SnapshotEditReply,
+    SnapshotImportReply,
+    SnapshotExportReply,
+    SnapshotDeleteReply,
+
+    // persistence model - record replies
+    RecordStartCaptureReply,
+    RecordStopCaptureReply,
+    RecordEditReply,
+    RecordImportReply,
+    RecordExportReply,
+    RecordDeleteReply,
+    RecordSetSettingsReply,
+    
+    // persistence model - record runs replies
+    RecordRunRunReply,
+    RecordRunEditReply,
+    RecordRunDeleteReply,
+
+    // toolbox replies
+    ToolboxGetReply,
+    ToolboxSubscribeReply,
+    ToolboxUnsubscribeReply,
+
+    // flow replies
+    FlowGetReply,
+    FlowSubscribeReply,
+    FlowUnsubscribeReply,
+    FlowAddModuleReply,
+    FlowRemoveModuleReply,
+    FlowAddLinkReply,
+    FlowRemoveLinkReply,
+    FlowMoveModuleReply,
+    FlowRenameModuleReply,
+    FlowNewRunReply,
+    FlowRepeatRunReply,
+    FlowStartReply,
+    FlowStopReply,
+    FlowAbortReply,
+
+    // module replies
+    ModuleSubscribeReply,
+    ModuleUnsubscribeReply,
+    ModuleReply,
+
+    // json
+    GetJsonReply,
+    SetJsonReply,
+    SubscribeJsonReply,
+    UnsubscribeJsonReply,
+}
+
+union NotificationMessage {
+    ProcessingInstanceStatusNotify,
+    PersistenceModelNotify,
+    ToolboxNotify,
+    FlowNotify,
+    ModuleNotify,
+    JsonNotify,
+    SubcriptionEndedJsonNotify,
+    ProcessingInstanceCloseNotify,
+}
+
+union TestCommandMessage {
+    // toolbox test commands
+    TestToolboxClear,
+    TestToolboxReAddAll,
+    TestToolboxLicenseAll,
+    TestToolboxUnlicenseAll,
+
+    // flow test commands
+    TestFlowClear,
+}
+
+table Request {
+    session_id: string (required);
+    request_id: string (required);
+    message: RequestMessage;
+}
+
+table Reply {
+    session_id: string (required);
+    
+    // the ID of the request that this reply belongs to
+    request_id: string (required);
+
+    status: Status (required);
+
+    // may be null in case of an error
+    message: ReplyMessage;
+}
+
+table Notification {
+    session_id: string (required);
+    message: NotificationMessage;
+}
+
+table TestCommand {
+    session_id: string (required);
+    message: TestCommandMessage;
+}
+
+union Message {
+    Request,
+    Reply,
+    Notification,
+
+    // request, but no reply; for testing purposes
+    TestCommand,
+
+    // Error handling
+    UnknownCommand,
+}
+
+table ProcessInstanceMessage {
+    message: Message (required);
+}
+
+root_type ProcessInstanceMessage;

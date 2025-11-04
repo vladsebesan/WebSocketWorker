@@ -1,0 +1,125 @@
+include "types_common_api.fbs";
+
+namespace modules_common_api;
+
+enum IOType : byte  {
+    INPUT = 0, 
+    OUTPUT
+}
+
+table Field {
+    id: string (required);
+    name: string;
+    display_name: string;
+    name_suffix: string;
+    tooltip: string;
+    io_type: IOType;
+    value_type: string; //the field value type under normal conditions
+    current_value: types_common_api.DataValue; // current_value can be value_type or NotAvailable or Error or NotLinked
+    is_convertible: bool;
+    is_deletable: bool = false;
+    is_linkable: bool;
+    link_info: types_common_api.LinkInfo; //null when node is not linked. value should then be NotLinked
+    visibility: types_common_api.Visibility; // flag controlling UI visibility.
+    is_disabled: bool;    // available only for outputs; invisbile in UI when true.
+    is_read_only: bool;   // true for linkable inputs and outputs. For input parameters it depends on their setting
+    category: [string];   // [''] if no category, elements describe nesting ["category", "subcategory", "sub-subcategory"] - recommended max nesting level is 3
+    tags: [string]; // describes field attributes relative to display policies
+}
+
+//the existance of this structure is to provide a workaround for https://github.com/google/flatbuffers/issues/7631
+//basically whenever we have changing collection of elements owning collections themselves, we need this to propagate
+//the granular changes within the innermost collections.
+//we decided not to follow this priciple on all other collections, in the hope that this will be fixed and merged into our
+//code. In that case by doing this only where we need, we reduce the workload to refactor
+table FieldCollection {
+    value: [Field] (required);
+}
+
+table ModuleData {
+    fields: FieldCollection;
+    custom_data: [ubyte]; //data container of unspecified format that a module_plugin can set for its corresponding viewer to read
+}
+
+table UISetup {
+    input_order: [string];
+    param_order: [string];
+    output_order: [string];
+}
+
+table Get {
+}
+
+table GetReply {
+    module_data: ModuleData (required);
+}
+
+table Notify {
+    module_data: ModuleData (required);
+}
+
+table SetField {
+    field_id: string (required);
+    value: types_common_api.DataValue;
+}
+
+table SetFieldReply {
+}
+
+//applies only to command fields
+table ExecuteCommandField {
+    field_id: string (required);
+}
+
+//applies only to command fields
+table ExecuteCommandFieldReply {
+}
+
+table SwapInputParam {
+    field_id: string (required);
+}
+
+table SwapInputParamReply {
+}
+
+//customized output definition
+table Subfield {
+    name: string (required);
+    type_id: string (required);
+    type_name: string (required);
+    is_indexed: bool;
+    subfields: [Subfield] (required);
+}
+
+table GetTypeBreakdown {
+    field_id: string (required);
+    subfield_path: string (required);
+}
+
+table GetTypeBreakdownReply {
+    root: Subfield;
+}
+
+table MakeOutputSoftlink {
+    field_id: string (required);
+    subfield_path: string (required);
+    name: string (required);
+}
+
+table MakeOutputSoftlinkReply {
+}
+
+table DeleteOutputSoftlink {
+    field_id: string (required);
+}
+
+table DeleteOutputSoftlinkReply {
+}
+
+table RenameField {
+    field_id: string (required);
+    name: string (required);
+}
+
+table RenameFieldReply {
+}

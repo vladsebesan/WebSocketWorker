@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "pnpm run build:flatbuffers && tsc -b && vite build",
+    "build:flatbuffers": "powershell -Command \"Get-ChildItem schemas/*.fbs | ForEach-Object { .\\tools\\flatc-23_5_26.exe --ts --gen-object-api --reflect-names --strict-json --schema --gen-mutable -o  src/generated $_.FullName }\"",
+    "prebuild": "pnpm run build:flatbuffers",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -15,7 +17,8 @@
   "packageManager": "pnpm@9.12.1",
   "dependencies": {
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "flatbuffers": "24.3.25"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",

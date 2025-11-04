@@ -1,0 +1,262 @@
+namespace types_common_api;
+
+// Describes the visibility policy for a field
+enum Visibility : byte {
+    HIDDEN = 0,   //never show such a field in the UI
+    NORMAL = 1,   //Show when the UI is in Normal or Extended Mode
+    EXTENDED = 2, //Show only when the UI is in Extended Mode
+}
+
+table LinkInfo {
+    outputId: string;
+    outputName: string;
+    outputMemberPath:string;
+    outputModuleId:string;
+}
+
+table ErrorValue {
+}
+
+table NotAvailableValue {
+}
+
+table NotLinkedValue {
+}
+
+table BoolValue {
+    value: bool;
+}
+
+table IntValue {
+    value: int64;
+    min: int64;      
+    max: int64;      
+    step: int64;    
+}
+
+table RealValue {
+    value: double;
+    min: double;      
+    max: double;      
+    step: double;   
+}
+
+table StringValue {
+    value: string;
+}
+
+table OptionEntryValue {
+    name: string;
+    selectable: bool;
+}
+
+table OptionValue {
+    selection: int64;
+    options: [OptionEntryValue];
+}
+
+table CommandValue {
+}
+
+table ImageU8C1 {
+    format: string;
+    width: int32;
+    height: int32;
+    binary: [ubyte];
+}
+
+table ImageU8C3 {
+    format: string;
+    width: int32;
+    height: int32;
+    binary: [ubyte];
+}
+
+table ImageS32C1 {
+    format: string;
+    width: int32;
+    height: int32;
+    binary: [ubyte];
+}
+
+table PointCloud {
+    cs_in_world: Pose3D;   // optional: nullptr means the object is in world coordinate space
+	max_size: int64;
+    range: [float];
+    intensity: [ushort];
+	confidence: [float];
+}
+
+table Profile {
+    cs_in_world: Pose3D;   // optional: nullptr means the object is in world coordinate space
+	max_size: int64;
+    range: [float];
+    intensity: [ushort];
+	confidence: [float];
+}
+
+table RawPoint2D {
+    x: double;
+    y: double;
+}
+
+table RawPoint3D {
+    x: double;
+    y: double;
+    z: double;
+}
+
+table Pose2D {
+    x: double;
+    y: double;
+	angle: double;
+}
+
+table Pose3D {
+    x: double;
+    y: double;
+    z: double;
+	rotation: Rotation3D;
+}
+
+table Rotation3D {
+    // 3D rotations are based on Euler angles following the "intrinsic XYZ convention"
+	euler_x: double; // rotation about the x-axis (intrinsic); once called 'theta'.
+    euler_y: double; // rotation about the y'-axis (the y-axis after the x rotation); once called 'psi'.
+    euler_z: double; // rotation about the z''-axis (the z-axis after both x and y rotations); once called 'phi'.
+}
+
+table CoordinateSystem2D {
+    cs_in_world: Pose2D;   // optional: nullptr means the object is in world coordinate space
+    pose: Pose2D;
+}
+
+table CoordinateSystem3D {
+    cs_in_world: Pose3D;   // optional: nullptr means the object is in world coordinate space
+    pose: Pose3D;          
+}
+
+table Point2D {
+    cs_in_world: Pose2D;   // optional: nullptr means the object is in world coordinate space
+    x: double;
+    y: double;
+}
+
+table Point3D {
+    cs_in_world: Pose3D;   // optional: nullptr means the object is in world coordinate space
+    x: double;
+    y: double;
+    z: double;
+}
+
+enum SolidType : uint32 {
+    Undefined,
+    Box,
+    Ellipsoid,
+}
+
+table Solid {
+    type: SolidType;
+    pose: Pose3D;
+	extent: RawPoint3D;
+}
+
+enum SetOperation : uint32 {
+    Add,  
+    Subtract,  
+    SymmetricDifference, 
+}
+
+table SolidSetOperation {
+    solid: Solid;
+    set_operation: SetOperation;
+}
+
+table Region3D {
+    cs_in_world: Pose3D;   // optional: nullptr means the object is in world coordinate space
+    solids: [SolidSetOperation];
+}
+
+table Rect2D {
+    cs_in_world: Pose2D;   // optional: nullptr means the object is in world coordinate space
+    pose: Pose2D;
+    width: double;
+    height: double;
+}
+
+table Line2D {
+    cs_in_world: Pose2D;   // optional: nullptr means the object is in world coordinate space
+    origin: RawPoint2D;     
+    direction: RawPoint2D;  
+}
+
+table Line3D {
+    cs_in_world: Pose3D;   // optional: nullptr means the object is in world coordinate space
+    origin: RawPoint3D;
+    direction: RawPoint3D;
+}
+
+table Ray2D {
+    cs_in_world: Pose2D;   // optional: nullptr means the object is in world coordinate space
+    origin: RawPoint2D;
+    direction: RawPoint2D;
+}
+
+table Ray3D {
+    cs_in_world: Pose3D;   // optional: nullptr means the object is in world coordinate space
+    origin: RawPoint3D;
+    direction: RawPoint3D;
+}
+
+table Segment2D {
+    cs_in_world: Pose2D;   // optional: nullptr means the object is in world coordinate space
+    origin: RawPoint2D;
+    end_point: RawPoint2D;
+}
+
+table Segment3D {
+    cs_in_world: Pose3D;   // optional: nullptr means the object is in world coordinate space
+    origin: RawPoint3D;
+    end_point: RawPoint3D;
+}
+
+table RealArray {
+    vec: [RealValue];
+}
+
+union DataValue {
+    ErrorValue,
+    NotAvailableValue,
+    NotLinkedValue,
+    BoolValue,
+    IntValue,
+    RealValue,
+    StringValue,
+    OptionValue,
+    CommandValue,
+    ImageU8C1,
+    ImageU8C3,
+    ImageS32C1,
+    PointCloud,
+    Profile,
+    RawPoint2D,
+    RawPoint3D,
+	Pose2D,
+	Pose3D,
+	Rotation3D,
+	CoordinateSystem2D,
+	CoordinateSystem3D,
+    Point2D,
+    Point3D,
+    Solid,
+    SolidSetOperation,
+    Region3D,
+    Rect2D,
+    Line2D,
+    Line3D,
+    Ray2D,
+    Ray3D,
+    Segment2D, 
+    Segment3D,
+    RealArray
+}
