@@ -159,8 +159,8 @@ export const usePIApi = (): PIApi => {
       isInitialized.current = true;
       
       const fullConfig: IPIApiConfig = {
-        maxReconnectAttempts: 5,
-        reconnectIntervalMs: 2000,
+        maxReconnectAttempts: 3,
+        reconnectIntervalMs: 1000,
         sessionKeepaliveIntervalMs: 1000,
         url: getPiSocketUrl(),
       };
