@@ -56,9 +56,13 @@ export class SessionManager {
   }
 
   public connect = (config: ISessionConfig): void => {
-    this.config = {...config};
+    this.config = {
+      ...this.config,  // Use existing defaults
+      ...config        // Override with provided config
+    };
+   
     this.updateState({
-      reconnectAttemptsLeft: config.maxReconnectAttempts,
+      reconnectAttemptsLeft: this.config.maxReconnectAttempts,
       sessionId: null,
       sessionState: SessionState.CONNECTING,
     });
@@ -107,9 +111,7 @@ export class SessionManager {
       this.reconnectTimer = null;
       this.attemptReconnect();
     }, this.config.reconnectIntervalMs);
-  };
-
-  private stopReconnectTimer = (): void => {
+  };  private stopReconnectTimer = (): void => {
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -134,6 +136,25 @@ export class SessionManager {
     this.transportLayer.connect(this.config.url);
   };
 
+  private triggerReconnectionFromKeepaliveFailure = (): void => {
+    if (this.state.sessionState !== SessionState.SESSION_KEEPALIVE_FAILED || this.state.reconnectAttemptsLeft <= 0) {
+      console.log('Cannot trigger reconnection - invalid state or no attempts left');
+      return;
+    }
+
+    console.log('Triggering immediate reconnection from keepalive failure');
+    
+    // Set state to CONNECTING and start reconnection
+    this.updateState({
+      reconnectAttemptsLeft: this.state.reconnectAttemptsLeft - 1,
+      sessionId: null,
+      sessionState: SessionState.CONNECTING,
+    });
+
+    // Attempt to connect immediately
+    this.transportLayer.connect(this.config.url);
+  };
+
   private performKeepalive = (): void => {
     if (this.state.sessionState !== SessionState.CONNECTED || !this.state.sessionId) {
       return;
@@ -152,24 +173,31 @@ export class SessionManager {
       this.lastKeepaliveSentTime = now;
       
       // Check for keepalive timeout
-      const maxFailures = this.config!.maxKeepaliveFailures;
+      const maxFailures = this.config!.maxKeepaliveFailures ?? 3;
       if (this.keepaliveFailureCount >= maxFailures) {
         console.error(`Keepalive failed ${this.keepaliveFailureCount} times, triggering reconnection`);
         this.stopKeepaliveTimer();
-        
-        // Update state to indicate keepalive failure and prepare for reconnection
-        this.updateState({
-          reconnectAttemptsLeft: this.state.reconnectAttemptsLeft > 0 ? this.state.reconnectAttemptsLeft : this.config.maxReconnectAttempts,
-          sessionId: null,
-          sessionState: SessionState.SESSION_KEEPALIVE_FAILED,
-        });
         
         // Notify that session is effectively disconnected due to keepalive failure
         if (this.onSessionDisconnected) {
           this.onSessionDisconnected();
         }
         
-        this.transportLayer.disconnect(); // This will trigger onTlDisconnected which handles reconnection
+        // Update state to indicate keepalive failure and prepare for reconnection
+        this.updateState({
+          reconnectAttemptsLeft: this.config.maxReconnectAttempts, // Always reset to full attempts on keepalive failure
+          sessionId: null,
+          sessionState: SessionState.SESSION_KEEPALIVE_FAILED,
+        });
+        
+        // Force disconnect and immediately start reconnection process
+        this.transportLayer.disconnect();
+        
+        // Immediately trigger reconnection without waiting for onTlDisconnected
+        setTimeout(() => {
+          this.triggerReconnectionFromKeepaliveFailure();
+        }, 100); // Small delay to ensure disconnect completes
+        
         return;
       }
 
