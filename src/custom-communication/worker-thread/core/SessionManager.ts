@@ -44,6 +44,7 @@ export class SessionManager {
   private keepaliveTimer: number | null = null;
   private keepaliveFailureCount: number = 0;
   private lastKeepaliveSentTime: number = 0;
+  private reconnectTimer: number | null = null;
   private transportLayer: ITransportLayer;
 
   constructor(transportLayer: ITransportLayer) {
@@ -66,6 +67,7 @@ export class SessionManager {
 
   public disconnect = (): void => {
     this.stopKeepaliveTimer();
+    this.stopReconnectTimer();
     this.transportLayer.disconnect();
   };
 
@@ -94,6 +96,44 @@ export class SessionManager {
     }
   };
 
+  private startReconnectTimer = (): void => {
+    if (this.reconnectTimer !== null || this.state.reconnectAttemptsLeft <= 0) {
+      return;
+    }
+
+    console.log(`Starting reconnect timer. Attempts left: ${this.state.reconnectAttemptsLeft}`);
+    
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.attemptReconnect();
+    }, this.config.reconnectIntervalMs);
+  };
+
+  private stopReconnectTimer = (): void => {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+      console.log('Reconnect timer stopped');
+    }
+  };
+
+  private attemptReconnect = (): void => {
+    if (this.state.reconnectAttemptsLeft <= 0) {
+      console.log('No more reconnect attempts left');
+      return;
+    }
+
+    console.log(`Attempting reconnect. Attempts left: ${this.state.reconnectAttemptsLeft}`);
+    
+    this.updateState({
+      reconnectAttemptsLeft: this.state.reconnectAttemptsLeft - 1,
+      sessionId: null,
+      sessionState: SessionState.CONNECTING,
+    });
+
+    this.transportLayer.connect(this.config.url);
+  };
+
   private performKeepalive = (): void => {
     if (this.state.sessionState !== SessionState.CONNECTED || !this.state.sessionId) {
       return;
@@ -114,13 +154,22 @@ export class SessionManager {
       // Check for keepalive timeout
       const maxFailures = this.config!.maxKeepaliveFailures;
       if (this.keepaliveFailureCount >= maxFailures) {
-        console.error(`Keepalive failed ${this.keepaliveFailureCount} times, disconnecting session`);
+        console.error(`Keepalive failed ${this.keepaliveFailureCount} times, triggering reconnection`);
+        this.stopKeepaliveTimer();
+        
+        // Update state to indicate keepalive failure and prepare for reconnection
         this.updateState({
-          reconnectAttemptsLeft: this.state.reconnectAttemptsLeft,
-          sessionId: this.state.sessionId,
+          reconnectAttemptsLeft: this.state.reconnectAttemptsLeft > 0 ? this.state.reconnectAttemptsLeft : this.config.maxReconnectAttempts,
+          sessionId: null,
           sessionState: SessionState.SESSION_KEEPALIVE_FAILED,
         });
-        this.disconnect();
+        
+        // Notify that session is effectively disconnected due to keepalive failure
+        if (this.onSessionDisconnected) {
+          this.onSessionDisconnected();
+        }
+        
+        this.transportLayer.disconnect(); // This will trigger onTlDisconnected which handles reconnection
         return;
       }
 
@@ -130,8 +179,9 @@ export class SessionManager {
   };
 
   onTlConnected = (): void => {
+    this.stopReconnectTimer(); // Stop reconnection timer since we're now connected
     this.updateState({
-      reconnectAttemptsLeft: this.config!.maxReconnectAttempts,
+      reconnectAttemptsLeft: this.state.reconnectAttemptsLeft, // Preserve current attempts count
       sessionId: null,
       sessionState: SessionState.SESSION_INIT,
     });
@@ -140,24 +190,53 @@ export class SessionManager {
 
   onTlDisonnected = (): void => {
     this.stopKeepaliveTimer();
-    this.updateState({
-      reconnectAttemptsLeft: 0,
-      sessionId: null,
-      sessionState: SessionState.DISCONNECTED,
-    });
-    if (this.onSessionDisconnected) {
-      this.onSessionDisconnected();
+    
+    // Only attempt reconnection if we have attempts left and we were previously connected/connecting
+    const shouldReconnect = this.state.reconnectAttemptsLeft > 0 && 
+      (this.state.sessionState === SessionState.CONNECTED || 
+       this.state.sessionState === SessionState.SESSION_INIT ||
+       this.state.sessionState === SessionState.CONNECTING ||
+       this.state.sessionState === SessionState.SESSION_KEEPALIVE_FAILED);
+
+    if (shouldReconnect) {
+      this.updateState({
+        reconnectAttemptsLeft: this.state.reconnectAttemptsLeft,
+        sessionId: null,
+        sessionState: SessionState.CONNECTING,
+      });
+      this.startReconnectTimer();
+    } else {
+      this.stopReconnectTimer();
+      this.updateState({
+        reconnectAttemptsLeft: 0,
+        sessionId: null,
+        sessionState: SessionState.DISCONNECTED,
+      });
+      console.log('All reconnection attempts exhausted, session disconnected');
+      if (this.onSessionDisconnected) {
+        this.onSessionDisconnected();
+      }
     }
   };
 
   onTlError = (): void => {
     this.stopKeepaliveTimer();
-    const newState = {
-      reconnectAttemptsLeft: this.state.reconnectAttemptsLeft,
-      sessionId: null,
-      sessionState: SessionState.ERROR,
-    };
-    this.updateState(newState);
+    
+    // Attempt reconnection on error if we have attempts left
+    if (this.state.reconnectAttemptsLeft > 0) {
+      this.updateState({
+        reconnectAttemptsLeft: this.state.reconnectAttemptsLeft,
+        sessionId: null,
+        sessionState: SessionState.CONNECTING,
+      });
+      this.startReconnectTimer();
+    } else {
+      this.updateState({
+        reconnectAttemptsLeft: 0,
+        sessionId: null,
+        sessionState: SessionState.ERROR,
+      });
+    }
   };
 
   onTlMessage = (buffer: Uint8Array): void => {
@@ -194,8 +273,9 @@ export class SessionManager {
       const res = tryUnwrapReplyOfType(buffer, SessionCreateReplyT);
       if (res?.payload instanceof SessionCreateReplyT) {
         this.keepaliveFailureCount = 0; // Reset failure count on successful session creation
+        this.stopReconnectTimer(); // Stop any pending reconnection attempts
         this.updateState({
-          reconnectAttemptsLeft: 0,
+          reconnectAttemptsLeft: this.config.maxReconnectAttempts, // Reset to full attempts on successful connection
           sessionId: res.sessionId,
           sessionState: SessionState.CONNECTED,
         });
@@ -216,7 +296,7 @@ export class SessionManager {
       if (res?.payload instanceof SessionKeepaliveReplyT) {
         this.keepaliveFailureCount = 0; // Reset failure count on successful keepalive response
         this.updateState({
-          reconnectAttemptsLeft: 0,
+          reconnectAttemptsLeft: this.config.maxReconnectAttempts, // Reset to full attempts on successful keepalive
           sessionId: res.sessionId,
           sessionState: SessionState.CONNECTED,
         });
