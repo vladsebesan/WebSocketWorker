@@ -1,4 +1,4 @@
-import type { ITransportLayer } from './TransportLayer';
+import type { ITransport } from './Transport';
 
 import { makeRequestMessageBuffer, tryUnwrapReplyOfType } from './FbbMessages';
 import { SessionCreateReplyT, SessionCreateT, SessionDestroyT, SessionKeepaliveReplyT, SessionKeepaliveT } from '../../../generated/process-instance-message-api';
@@ -27,7 +27,7 @@ export interface ISessionState {
   sessionState: SessionState;
 }
 
-export class SessionManager {
+export class Session {
   private state: ISessionState = {
     reconnectAttemptsLeft: 0,
     sessionId: null,
@@ -41,13 +41,13 @@ export class SessionManager {
     url: '', //ws url
   };
   private lastReceivedMessageTime = 0;
-  private keepaliveTimer: number | null = null;
+  private keepaliveTimer: NodeJS.Timeout | null = null;
   private keepaliveFailureCount: number = 0;
   private lastKeepaliveSentTime: number = 0;
-  private reconnectTimer: number | null = null;
-  private transportLayer: ITransportLayer;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private transportLayer: ITransport;
 
-  constructor(transportLayer: ITransportLayer) {
+  constructor(transportLayer: ITransport) {
     this.transportLayer = transportLayer;
     this.transportLayer.onConnected = this.onTlConnected.bind(this);
     this.transportLayer.onDisconnected = this.onTlDisonnected.bind(this);
@@ -113,7 +113,9 @@ export class SessionManager {
       this.reconnectTimer = null;
       this.attemptReconnect();
     }, this.config.reconnectIntervalMs);
-  };  private stopReconnectTimer = (): void => {
+  };  
+  
+  private stopReconnectTimer = (): void => {
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -310,8 +312,7 @@ export class SessionManager {
           sessionState: SessionState.CONNECTED,
         });
         
-        // Start keepalive timer when session is connected
-        this.startKeepaliveTimer();
+        this.startKeepaliveTimer(); // Start keepalive timer when session is connected
         
         if (this.onConnected) {
           this.onConnected();
@@ -324,6 +325,13 @@ export class SessionManager {
     {
       const res = tryUnwrapReplyOfType(buffer, SessionKeepaliveReplyT);
       if (res?.payload instanceof SessionKeepaliveReplyT) {
+
+        // Validate that the keepalive reply sessionId matches our current session
+        if (res.sessionId !== this.state.sessionId) {
+          console.warn(`Received keepalive reply with mismatched sessionId. Expected: ${this.state.sessionId}, Received: ${res.sessionId}`);
+          return true; //we still ingest the message but reject the keepalive reply
+        }
+        
         this.keepaliveFailureCount = 0; // Reset failure count on successful keepalive response
         this.updateState({
           reconnectAttemptsLeft: this.config.maxReconnectAttempts, // Reset to full attempts on successful keepalive
@@ -347,8 +355,6 @@ export class SessionManager {
     if (hasChanged) {
       this.state = newState;
       console.log('SessionManager state updated:', this.state);
-      
-      // Notify state change listeners
       if (this.onStateChanged) {
         this.onStateChanged({ ...this.state });
       }

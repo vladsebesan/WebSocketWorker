@@ -1,7 +1,6 @@
 /* eslint-disable no-console */
-// TransportLayer - Abstracts WebSocket communication
 
-export interface ITransportLayer {
+export interface ITransport {
   connect(url: string): void;
   disconnect(): void;
   onConnected: (() => void) | null;
@@ -11,7 +10,7 @@ export interface ITransportLayer {
   send(buffer: Uint8Array): void;
 }
 
-export class TransportLayer implements ITransportLayer {
+export class Transport implements ITransport {
   private websocket: null | WebSocket = null;
 
   public onConnected: (() => void) | null = null;

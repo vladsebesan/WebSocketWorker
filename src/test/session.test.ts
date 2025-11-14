@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { SessionManager, SessionState, type ISessionConfig, type ISessionState } from '../custom-communication/worker-thread/core/SessionManager'
-import type { ITransportLayer } from '../custom-communication/worker-thread/core/TransportLayer'
+import { Session, SessionState, type ISessionConfig, type ISessionState } from '../custom-communication/worker-thread/core/Session'
+import type { ITransport } from '../custom-communication/worker-thread/core/Transport'
 import { SessionCreateReplyT, SessionKeepaliveReplyT } from '../generated/process-instance-message-api'
 import { ProcessInstanceMessageT, ReplyT, StatusT, Message, ReplyMessage } from '../generated/process-instance-message-api'
 import * as flatbuffers from 'flatbuffers'
@@ -51,7 +51,7 @@ const createSessionKeepaliveReply = (sessionId: string, requestId: string = make
 }
 
 // Mock transport layer implementation
-class MockTransportLayer implements ITransportLayer {
+class MockTransportLayer implements ITransport {
   public onConnected: (() => void) | null = null
   public onDisconnected: (() => void) | null = null
   public onError: ((error: Error) => void) | null = null
@@ -130,7 +130,7 @@ class MockTransportLayer implements ITransportLayer {
 }
 
 describe('Session Manager Tests', () => {
-  let sessionManager: SessionManager
+  let sessionManager: Session
   let mockTransport: MockTransportLayer
   let onConnectedSpy: ReturnType<typeof vi.fn>
   let onDisconnectedSpy: ReturnType<typeof vi.fn>
@@ -151,7 +151,7 @@ describe('Session Manager Tests', () => {
 
   beforeEach(() => {
     mockTransport = new MockTransportLayer()
-    sessionManager = new SessionManager(mockTransport)
+    sessionManager = new Session(mockTransport)
     
     // Initialize tracking variables
     stateHistory = []
@@ -275,6 +275,33 @@ describe('Session Manager Tests', () => {
       expect(currentState.sessionState).toBe(SessionState.CONNECTED)
       expect(currentState.sessionId).toBe('test-session-456')
       expect(currentState.reconnectAttemptsLeft).toBe(defaultConfig.maxReconnectAttempts)
+      
+      vi.useRealTimers()
+    })
+
+    it('should reject keepalive replies with mismatched sessionId', async () => {
+      vi.useFakeTimers()
+      
+      // First establish a session
+      sessionManager.connect(defaultConfig)
+      vi.advanceTimersByTime(20) // Connect transport
+      mockTransport.simulateSessionCreateReply('correct-session-id')
+      
+      expect(currentState.sessionState).toBe(SessionState.CONNECTED)
+      expect(currentState.sessionId).toBe('correct-session-id')
+      
+      // Clear previous calls
+      onStateChangedSpy.mockClear()
+      
+      // Simulate keepalive reply with wrong sessionId
+      mockTransport.simulateSessionKeepaliveReply('wrong-session-id')
+      
+      // Should NOT trigger any state changes since the sessionId doesn't match
+      expect(onStateChangedSpy).not.toHaveBeenCalled()
+      
+      // State should remain unchanged
+      expect(currentState.sessionState).toBe(SessionState.CONNECTED)
+      expect(currentState.sessionId).toBe('correct-session-id')
       
       vi.useRealTimers()
     })

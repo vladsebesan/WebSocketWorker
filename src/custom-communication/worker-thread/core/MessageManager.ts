@@ -1,6 +1,6 @@
 // MessageManager - Handles request/reply correlation and message parsing
 import type { MainThreadClient } from './MainThreadClient';
-import type { TransportLayer } from './TransportLayer';
+import type { Transport } from './Transport';
 
 interface IPendingRequest {
   reject: (error: Error) => void;

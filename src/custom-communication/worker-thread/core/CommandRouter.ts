@@ -2,13 +2,13 @@
 import type { IPIApiGenericCommand } from '../../shared/WorkerProtocol';
 import type { MainThreadClient } from './MainThreadClient';
 import type { MessageManager } from './MessageManager';
-import type { SessionManager } from './SessionManager';
+import type { Session } from './Session';
 
 import { PIApiWorkerCommandType } from '../../shared/WorkerProtocol';
 
 export class CommandRouter {
   constructor(
-    private sessionManager: SessionManager,
+    private sessionManager: Session,
     private messageManager: MessageManager,
     private mainThreadClient: MainThreadClient,
   ) {}

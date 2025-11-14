@@ -5,8 +5,8 @@ import { PIApiWorkerCommandType, PIApiWorkerResponseType } from '../shared/Worke
 import { CommandRouter } from './core/CommandRouter';
 import { MainThreadClient } from './core/MainThreadClient';
 import { MessageManager } from './core/MessageManager';
-import { SessionManager } from './core/SessionManager';
-import { TransportLayer } from './core/TransportLayer';
+import { Session } from './core/Session';
+import { Transport } from './core/Transport';
 
 /**
  * Main PIApi worker class - handles all communication with the PI backend
@@ -53,7 +53,7 @@ class PIApiWorker {
 
   private mainThreadClient!: MainThreadClient;
   private messageManager!: MessageManager;
-  private sessionManager!: SessionManager;
+  private sessionManager!: Session;
   //private transportLayer!: TransportLayer;
 
   constructor() {
@@ -99,7 +99,7 @@ class PIApiWorker {
   private initializeComponents(): void {
     // Initialize core components in the right order
     this.mainThreadClient = new MainThreadClient();
-    this.sessionManager = new SessionManager(new TransportLayer());
+    this.sessionManager = new Session(new Transport());
     this.messageManager = new MessageManager(/*this.sessionManager*/);
     this.commandRouter = new CommandRouter(this.sessionManager, this.messageManager, this.mainThreadClient);
 
