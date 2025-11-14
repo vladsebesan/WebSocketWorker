@@ -1,156 +1,281 @@
-/* eslint-disable no-console */
-// Main thread PIApi class - Clean, Promise-based public API
-
-
 import { useEffect, useRef, useState } from 'react';
 
-import type {
-  IFlowModel,
-  IJobCreateRequest,
-  IJobDeleteRequest,
-  IJobEditRequest,
-  IJobEntry,
-  IJobLoadRequest,
-  IPersistenceModel,
-  IProcessingInstanceStatus,
-  ISnapshotCreateRequest,
-  ISnapshotDeleteRequest,
-  ISnapshotEditRequest,
-  ISnapshotEntry,
-  ISnapshotLoadRequest,
-} from './shared/DomainModels';
-import type {
-  IPIApiConfig,
-  IPIApiNotificationCallback,
-  IPIApiState,
-  IPIApiSubscription,
+import {
+  PIApiConnectionState,
+  PIApiSessionState,
+  type IPIApiConfig,
+  type IPIApiNotificationCallback,
+  type IPIApiState,
+  type IPIApiSubscription,
 } from './shared/PIApiTypes';
 
-import { PIApiWorkerClient } from './main-thread/PIApiWorkerClient';
-import { PIApiWorkerCommandType } from './shared/WorkerProtocol';
 import type { IWebSocketURL } from '../interfaces/IWebsocketUrl';
+import { PIApiWorkerCommandType, PIApiWorkerResponseType, type IPIApiGenericCommand, type IPIApiWorkerResponse } from './shared/WorkerProtocol';
+
+interface IPendingRequest {
+  reject: (error: Error) => void;
+  resolve: (data: any) => void;
+  timeout: NodeJS.Timeout;
+}
+
+interface IActiveSubscription {
+  callback: IPIApiNotificationCallback<any>;
+  subscribeCommandType: PIApiWorkerCommandType;
+  unsubscribeCommandType: PIApiWorkerCommandType;
+}
 
 export class PIApi {
-  private workerClient: PIApiWorkerClient;
+  private nextRequestId = 1;
+  private pendingRequests = new Map<string, IPendingRequest>();
+  private state: IPIApiState;
+  private stateChangeCallbacks = new Set<IPIApiNotificationCallback<IPIApiState>>();
+  private subscriptions = new Map<string, IActiveSubscription>();
+  private worker: null | Worker = null;
+  private config: IPIApiConfig;
 
   constructor(config: IPIApiConfig) {
-    this.workerClient = new PIApiWorkerClient(config);
+    this.config = config;
+    this.state = this.getInitialState();
+    this.initializeWorker();
   }
 
-  // Connection management
   public async connect(): Promise<void> {
-    return this.workerClient.connect();
-  }
-
-  // Job Management API
-  public async createJob(request: IJobCreateRequest): Promise<IJobEntry> {
-    return this.workerClient.sendCommand(PIApiWorkerCommandType.JOB_CREATE, request);
-  }
-
-  // Snapshot Management API
-  public async createSnapshot(request: ISnapshotCreateRequest): Promise<ISnapshotEntry> {
-    return this.workerClient.sendCommand(PIApiWorkerCommandType.SNAPSHOT_CREATE, request);
-  }
-
-  public async deleteJob(request: IJobDeleteRequest): Promise<void> {
-    return this.workerClient.sendCommand(PIApiWorkerCommandType.JOB_DELETE, request);
-  }
-
-  public async deleteSnapshot(request: ISnapshotDeleteRequest): Promise<void> {
-    return this.workerClient.sendCommand(PIApiWorkerCommandType.SNAPSHOT_DELETE, request);
+    const command: IPIApiGenericCommand = {
+      payload: { config: this.config },
+      requestId: this.generateRequestId(),
+      type: PIApiWorkerCommandType.CONNECT,
+    };
+    return this.sendCommandInternal(command);
   }
 
   public async disconnect(): Promise<void> {
-    return this.workerClient.disconnect();
+    const command: IPIApiGenericCommand = {
+      requestId: this.generateRequestId(),
+      type: PIApiWorkerCommandType.DISCONNECT,
+    };
+    await this.sendCommandInternal(command);
+    this.cleanup();
   }
 
-  // Resource cleanup
   public dispose(): void {
-    this.workerClient.dispose();
-  }
-
-  public async editJob(request: IJobEditRequest): Promise<void> {
-    return this.workerClient.sendCommand(PIApiWorkerCommandType.JOB_EDIT, request);
-  }
-
-  public async editSnapshot(request: ISnapshotEditRequest): Promise<void> {
-    return this.workerClient.sendCommand(PIApiWorkerCommandType.SNAPSHOT_EDIT, request);
-  }
-
-  // Flow API
-  public async getFlow(): Promise<IFlowModel> {
-    return this.workerClient.sendCommand(PIApiWorkerCommandType.FLOW_GET);
-  }
-
-  // Persistence Model API
-  public async getPersistenceModel(): Promise<IPersistenceModel> {
-    return this.workerClient.sendCommand(PIApiWorkerCommandType.PERSISTENCE_MODEL_GET);
-  }
-
-  // Processing Instance Status API
-  public async getProcessingInstanceStatus(): Promise<IProcessingInstanceStatus> {
-    return this.workerClient.sendCommand(PIApiWorkerCommandType.PROCESSING_INSTANCE_STATUS_GET);
+    this.cleanup();
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
   }
 
   public getState(): IPIApiState {
-    return this.workerClient.getState();
+    return { ...this.state };
   }
 
-  public async loadJob(request: IJobLoadRequest): Promise<void> {
-    return this.workerClient.sendCommand(PIApiWorkerCommandType.JOB_LOAD, request);
+  private handleWorkerError = (error: ErrorEvent): void => {
+    console.error('PIApiWorkerClient: Worker error:', error);
+    // Handle worker errors, potentially by updating state
+  };
+  private handleWorkerMessage = (event: MessageEvent): void => {
+    const response = event.data as IPIApiWorkerResponse;
+
+    switch (response.type) {
+      case PIApiWorkerResponseType.ERROR:
+      case PIApiWorkerResponseType.SUCCESS:
+        this.handleCommandResponse(response);
+        break;
+      case PIApiWorkerResponseType.FLOW_NOTIFICATION:
+      case PIApiWorkerResponseType.PERSISTENCE_MODEL_NOTIFICATION:
+      case PIApiWorkerResponseType.PROCESSING_INSTANCE_STATUS_NOTIFICATION:
+        this.handleNotification(response);
+        break;
+      case PIApiWorkerResponseType.STATE_CHANGED:
+        this.handleStateChange(response);
+        break;
+      default:
+        console.warn('PIApiWorkerClient: Unknown response type:', response);
+        break;
+    }
+  };
+
+  private cleanup(): void {
+    // Cancel all pending requests
+    for (const [requestId, pending] of this.pendingRequests) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error('Connection closed'));
+    }
+    this.pendingRequests.clear();
+
+    // Clear subscriptions
+    this.subscriptions.clear();
+    this.stateChangeCallbacks.clear();
   }
 
-  public async loadSnapshot(request: ISnapshotLoadRequest): Promise<void> {
-    return this.workerClient.sendCommand(PIApiWorkerCommandType.SNAPSHOT_LOAD, request);
+  private generateRequestId(): string {
+    return `req_${this.nextRequestId++}`;
+  }
+
+  private getInitialState(): IPIApiState {
+    return {
+      connectionState: PIApiConnectionState.DISCONNECTED,
+      lastError: null,
+      remainingReconnectAttempts: this.config.maxReconnectAttempts,
+      sessionId: null,
+      sessionState: PIApiSessionState.NO_SESSION,
+    };
+  }
+
+  private handleCommandResponse(response: IPIApiWorkerResponse): void {
+    if (!response.requestId) {
+      return;
+    }
+
+    const pending = this.pendingRequests.get(response.requestId);
+    if (pending) {
+      this.pendingRequests.delete(response.requestId);
+      clearTimeout(pending.timeout);
+
+      if (response.type === PIApiWorkerResponseType.SUCCESS) {
+        pending.resolve((response as any).data);
+      } else {
+        pending.reject(new Error((response as any).error?.message || 'Unknown error'));
+      }
+    }
+  }
+
+  private handleNotification(response: IPIApiWorkerResponse): void {
+    // Find subscriptions that match this notification type
+    for (const subscription of this.subscriptions.values()) {
+      // Call the callback with the notification data
+      try {
+        subscription.callback((response as any).data);
+      } catch (error) {
+        console.error('Error in notification callback:', error);
+      }
+    }
+  }
+
+  private handleStateChange(response: IPIApiWorkerResponse): void {
+    this.state = (response as any).state;
+
+    // Notify all state change callbacks
+    for (const callback of this.stateChangeCallbacks) {
+      try {
+        callback(this.state);
+      } catch (error) {
+        console.error('Error in state change callback:', error);
+      }
+    }
+  }
+
+  private initializeWorker(): void {
+    const workerUrl = new URL('./worker-thread/PIApiWorker.ts', import.meta.url);
+
+    try {
+      this.worker = new Worker(workerUrl, { type: 'module' });
+      this.worker.addEventListener('message', this.handleWorkerMessage);
+      this.worker.addEventListener('error', this.handleWorkerError);
+    } catch (error) {
+      throw new Error(
+        `Failed to create PIApi worker: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private async sendCommandInternal<T = unknown>(command: IPIApiGenericCommand): Promise<T> {
+    if (!this.worker) {
+      throw new Error('Worker not initialized');
+    }
+
+    return new Promise<T>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingRequests.delete(command.requestId);
+        reject(new Error('Request timeout'));
+      }, 120000); // 120 second timeout
+
+      this.pendingRequests.set(command.requestId, {
+        reject,
+        resolve,
+        timeout,
+      });
+
+      this.worker!.postMessage(command);
+    });
   }
 
   public onStateChange(callback: IPIApiNotificationCallback<IPIApiState>): IPIApiSubscription {
-    return this.workerClient.onStateChange(callback);
+    this.stateChangeCallbacks.add(callback);
+    return {
+      unsubscribe: (): void => {
+        this.stateChangeCallbacks.delete(callback);
+      },
+    };
   }
 
-  public subscribeToFlow(callback: IPIApiNotificationCallback<IFlowModel>): IPIApiSubscription {
-    return this.workerClient.subscribeToNotifications(
-      PIApiWorkerCommandType.FLOW_SUBSCRIBE,
-      PIApiWorkerCommandType.FLOW_UNSUBSCRIBE,
-      callback,
-    );
+  public async sendCommand<T = unknown>(commandType: PIApiWorkerCommandType, payload?: unknown): Promise<T> {
+    const command: IPIApiGenericCommand = {
+      payload,
+      requestId: this.generateRequestId(),
+      type: commandType,
+    };
+    return this.sendCommandInternal(command);
   }
 
-  public subscribeToPersistenceModel(
-    callback: IPIApiNotificationCallback<IPersistenceModel>,
+  public subscribeToNotifications<T>(
+    subscribeCommandType: PIApiWorkerCommandType,
+    unsubscribeCommandType: PIApiWorkerCommandType,
+    callback: IPIApiNotificationCallback<T>,
   ): IPIApiSubscription {
-    return this.workerClient.subscribeToNotifications(
-      PIApiWorkerCommandType.PERSISTENCE_MODEL_SUBSCRIBE,
-      PIApiWorkerCommandType.PERSISTENCE_MODEL_UNSUBSCRIBE,
-      callback,
-    );
-  }
+    const subscriptionId = this.generateRequestId();
 
-  public subscribeToProcessingInstanceStatus(
-    callback: IPIApiNotificationCallback<IProcessingInstanceStatus>,
-  ): IPIApiSubscription {
-    return this.workerClient.subscribeToNotifications(
-      PIApiWorkerCommandType.PROCESSING_INSTANCE_STATUS_SUBSCRIBE,
-      PIApiWorkerCommandType.PROCESSING_INSTANCE_STATUS_UNSUBSCRIBE,
+    // Store the subscription
+    this.subscriptions.set(subscriptionId, {
       callback,
-    );
-  }
+      subscribeCommandType,
+      unsubscribeCommandType,
+    });
+
+    // Send subscribe command
+    const command: IPIApiGenericCommand = {
+      requestId: subscriptionId,
+      type: subscribeCommandType,
+    };
+    this.sendCommandInternal(command).catch((error) => {
+      console.error('Failed to subscribe:', error);
+      this.subscriptions.delete(subscriptionId);
+    });
+
+    return {
+      unsubscribe: (): void => {
+        const subscription = this.subscriptions.get(subscriptionId);
+        if (subscription) {
+          this.subscriptions.delete(subscriptionId);
+
+          // Send unsubscribe command
+          const unsubscribeCommand: IPIApiGenericCommand = {
+            requestId: this.generateRequestId(),
+            type: subscription.unsubscribeCommandType,
+          };
+          this.sendCommandInternal(unsubscribeCommand).catch((error) => {
+            console.error('Failed to unsubscribe:', error);
+          });
+        }
+      },
+    };
 }
-
-// Helper function to get WebSocket URL (similar to your current getWebsocketUrl)
-const getPiSocketUrl = (): IWebSocketURL => {
-  const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
-  const protocol = isHttps ? 'wss:' : 'ws:';
-  const hostname = window.location.hostname || 'localhost';
-  const port = 9090;
-  const url = `${protocol}//${hostname}:${port}/ws/`;
-  return url as IWebSocketURL;
-};
+}
 
 // React hook for using PIApi (similar to your current useViewerChannel)
 export const usePIApi = (): PIApi => {
   const [piApi, setPiApi] = useState<PIApi | null>(null);
   const isInitialized = useRef(false);
+
+  // Helper function to get WebSocket URL (similar to your current getWebsocketUrl)
+  const getPiSocketUrl = (): IWebSocketURL => {
+    const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+    const protocol = isHttps ? 'wss:' : 'ws:';
+    const hostname = window.location.hostname || 'localhost';
+    const port = 9090;
+    const url = `${protocol}//${hostname}:${port}/ws/`;
+    return url as IWebSocketURL;
+  };
 
   // Create on first use
   useEffect(() => {

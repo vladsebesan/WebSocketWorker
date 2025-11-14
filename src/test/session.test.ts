@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { Session, SessionState, type ISessionConfig, type ISessionState } from '../custom-communication/worker-thread/core/Session'
-import type { ITransport } from '../custom-communication/worker-thread/core/Transport'
+import { Session, SessionState, type ISessionConfig, type ISessionState } from '../custom-communication/worker-thread/Session'
+import type { ITransport } from '../custom-communication/worker-thread/Transport'
 import { SessionCreateReplyT, SessionKeepaliveReplyT } from '../generated/process-instance-message-api'
 import { ProcessInstanceMessageT, ReplyT, StatusT, Message, ReplyMessage } from '../generated/process-instance-message-api'
 import * as flatbuffers from 'flatbuffers'
@@ -446,16 +446,16 @@ describe('Session Manager Tests', () => {
       vi.useRealTimers()
     })
 
-    it('should forward non-session messages to message handler', () => {
-      const testBuffer = new Uint8Array([5, 6, 7, 8]) // Invalid FlatBuffer - will be forwarded
+    it('should discard non-PIMessage messages', () => {
+      const testBuffer = new Uint8Array([5, 6, 7, 8]) // Invalid FlatBuffer - will be discarded
       
-      // Simulate receiving a non-session message (invalid buffer)
+      // Simulate receiving a non-PIMessage (invalid buffer)
       if (mockTransport.onMessage) {
         mockTransport.onMessage(testBuffer)
       }
       
-      // Since it's not a valid session message, it should be forwarded to onMessage handler
-      expect(onMessageSpy).toHaveBeenCalledWith(testBuffer)
+      // Since it's not a valid PIMessage, it should be discarded and not forwarded to onMessage handler
+      expect(onMessageSpy).not.toHaveBeenCalled()
     })
   })
 

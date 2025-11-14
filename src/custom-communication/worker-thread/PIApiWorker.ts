@@ -1,31 +1,18 @@
 // PIApiWorker.ts - Main worker entry point (replaces ViewerChannelWorker)
-import type { IPIApiGenericCommand, IPIApiWorkerResponse } from '../shared/WorkerProtocol';
+import type { IPIApiError, IPIApiState } from '../shared/PIApiTypes';
+import { PIApiWorkerResponseType, type IPIApiGenericCommand, type IPIApiWorkerResponse } from '../shared/WorkerProtocol';
 
-import { PIApiWorkerCommandType, PIApiWorkerResponseType } from '../shared/WorkerProtocol';
-import { CommandRouter } from './core/CommandRouter';
-import { MainThreadClient } from './core/MainThreadClient';
-import { MessageManager } from './core/MessageManager';
-import { Session } from './core/Session';
-import { Transport } from './core/Transport';
+import { PIApiWorkerCommandType } from '../shared/WorkerProtocol';
+import { MessageManager } from './MessageManager';
+import { Session } from './Session';
+import { Transport } from './Transport';
 
 /**
  * Main PIApi worker class - handles all communication with the PI backend
  * This replaces the ViewerChannelWorker but is much more sophisticated
  */
 class PIApiWorker {
-  private commandRouter!: CommandRouter;
-  private handleConnectionStateChange = (state: any): void => {
-    // Notify main thread of connection state changes
-    this.mainThreadClient.sendStateChange(state);
-
-    // Handle session management based on connection state
-    if (state === 'CONNECTED') {
-      // Connection established - session manager can create sessions
-    } else if (state === 'DISCONNECTED') {
-      // Handle cleanup, reset session state
-      this.sessionManager.handleDisconnection();
-    }
-  };
+  private messageManager!: MessageManager;
 
   private handleMainThreadMessage = (event: MessageEvent): void => {
     const command = event.data as IPIApiGenericCommand;
@@ -41,24 +28,51 @@ class PIApiWorker {
 
       // All other PI API commands are routed through the command router
       default:
-        this.commandRouter.route(command);
         break;
     }
   };
 
-  private handleWebSocketMessage = (buffer: ArrayBuffer): void => {
-    // Pass WebSocket messages to the message manager for processing
-    this.messageManager.handleIncomingMessage(buffer);
-  };
+  private postToMainThread(response: IPIApiWorkerResponse): void {
+    self.postMessage(response);
+  }
 
-  private mainThreadClient!: MainThreadClient;
-  private messageManager!: MessageManager;
-  private sessionManager!: Session;
-  //private transportLayer!: TransportLayer;
+  public sendError(requestId: string, error: IPIApiError): void {
+    const response: IPIApiWorkerResponse = {
+      error,
+      requestId,
+      type: PIApiWorkerResponseType.ERROR,
+    };
+    this.postToMainThread(response);
+  }
+
+  public sendNotification<T>(notificationType: PIApiWorkerResponseType, data: T): void {
+    const response = {
+      data,
+      type: notificationType,
+    };
+    this.postToMainThread(response as IPIApiWorkerResponse);
+  }
+
+  public sendStateChange(state: IPIApiState): void {
+    const response: IPIApiWorkerResponse = {
+      state,
+      type: PIApiWorkerResponseType.STATE_CHANGED,
+    };
+    this.postToMainThread(response);
+  }
+
+  public sendSuccess<T>(requestId: string, data: T): void {
+    const response: IPIApiWorkerResponse = {
+      data,
+      requestId,
+      type: PIApiWorkerResponseType.SUCCESS,
+    };
+    this.postToMainThread(response);
+  }
 
   constructor() {
-    this.initializeComponents();
-    this.setupMessageHandling();
+    this.messageManager = new MessageManager(new Session(new Transport()));
+    self.addEventListener('message', this.handleMainThreadMessage);
   }
 
   private async handleConnect(command: IPIApiGenericCommand): Promise<void> {
@@ -67,14 +81,10 @@ class PIApiWorker {
       if (!config) {
         throw new Error('Missing config in CONNECT command');
       }
-
-      this.sessionManager.connect(config);
-
-      //await this.transportLayer.connect(config.url); // Connection successful - session manager can now create session when needed
-
-      this.mainThreadClient.sendSuccess(command.requestId, null);
+      this.messageManager.connect(config);
+      this.sendSuccess(command.requestId, null);
     } catch (error) {
-      this.mainThreadClient.sendError(command.requestId, {
+      this.sendError(command.requestId, {
         code: 'CONNECTION_FAILED',
         message: error instanceof Error ? error.message : String(error),
       });
@@ -83,41 +93,19 @@ class PIApiWorker {
 
   private async handleDisconnect(command: IPIApiGenericCommand): Promise<void> {
     try {
-      this.transportLayer.disconnect();
-      this.sessionManager.reset();
-      this.messageManager.cancelAllPendingRequests();
-
-      this.mainThreadClient.sendSuccess(command.requestId, null);
+      this.messageManager.disconnect();
+      this.sendSuccess(command.requestId, null);
     } catch (error) {
-      this.mainThreadClient.sendError(command.requestId, {
+      this.sendError(command.requestId, {
         code: 'DISCONNECT_FAILED',
         message: error instanceof Error ? error.message : String(error),
       });
     }
-  }
-
-  private initializeComponents(): void {
-    // Initialize core components in the right order
-    this.mainThreadClient = new MainThreadClient();
-    this.sessionManager = new Session(new Transport());
-    this.messageManager = new MessageManager(/*this.sessionManager*/);
-    this.commandRouter = new CommandRouter(this.sessionManager, this.messageManager, this.mainThreadClient);
-
-    // Setup event handlers
-    //    this.transportLayer.onMessage = this.handleWebSocketMessage;
-    //this.transportLayer.onStateChange = this.handleConnectionStateChange;
-  }
-
-  private setupMessageHandling(): void {
-    // Listen for commands from main thread
-    self.addEventListener('message', this.handleMainThreadMessage);
   }
 }
 
 // Auto-initialize when running in Web Worker context (like your current code)
 if (typeof self !== 'undefined' && typeof window === 'undefined') {
   const piApiWorker = new PIApiWorker();
-
-  // Export for debugging (similar to your current __websocketWorker export)
-  (self as any).__piApiWorker = piApiWorker;
+  (self as any).__piApiWorker = piApiWorker; // Export for debugging (similar to your current __websocketWorker export)
 }

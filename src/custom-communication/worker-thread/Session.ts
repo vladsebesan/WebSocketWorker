@@ -1,8 +1,8 @@
 import type { ITransport } from './Transport';
 
-import { makeRequestMessageBuffer, tryUnwrapReplyOfType } from './FbbMessages';
-import { SessionCreateReplyT, SessionCreateT, SessionDestroyT, SessionKeepaliveReplyT, SessionKeepaliveT } from '../../../generated/process-instance-message-api';
-import { makeUUID } from '../../../utils/uuid';
+import { makeRequestMessageBuffer, tryUnwrapPiMessageBuffer, tryUnwrapReply, tryUnwrapReplyOfType } from './FbbMessages';
+import { ProcessInstanceMessageT, SessionCreateReplyT, SessionCreateT, SessionDestroyT, SessionKeepaliveReplyT, SessionKeepaliveT } from '../../generated/process-instance-message-api';
+import { makeUUID } from '../../utils/uuid';
 
 export enum SessionState {
   CONNECTED = 'CONNECTED',
@@ -30,7 +30,7 @@ export interface ISessionState {
 export interface ISession {
   connect: (config: ISessionConfig) => void;
   disconnect: () => void;
-  onMessage: ((buffer: Uint8Array) => void) | null;
+  onMessage: ((message: ProcessInstanceMessageT) => void) | null;
   onConnected: (() => void) | null;
   onDisconnected: (() => void) | null;
   onStateChanged: ((state: ISessionState) => void) | null;
@@ -89,7 +89,7 @@ export class Session implements ISession {
     this.transportLayer.disconnect();
   };
 
-  public onMessage: ((buffer: Uint8Array) => void) | null = null;
+  public onMessage: ((message: ProcessInstanceMessageT) => void) | null = null;
 
   public onConnected: (() => void) | null = null;
 
@@ -293,9 +293,16 @@ export class Session implements ISession {
     // we've received a message, so communication is still alive
     this.lastReceivedMessageTime = Date.now();
 
+    const piMessage = tryUnwrapPiMessageBuffer(buffer);
+    if(piMessage === null) {
+      console.error('Failed to unwrap incoming message buffer');
+      return;
+    }
+
+
     //if this is a SessionKeepaliveReply message handle it here
     {
-      const res = tryUnwrapReplyOfType(buffer, SessionKeepaliveReplyT);
+      const res = tryUnwrapReplyOfType(tryUnwrapReply(piMessage), SessionKeepaliveReplyT);
       if (res?.payload instanceof SessionKeepaliveReplyT) {
 
         // Validate that the keepalive reply sessionId matches our current session
@@ -316,7 +323,7 @@ export class Session implements ISession {
 
     //if this is a SessionCreateReply message handle it here
     {
-      const res = tryUnwrapReplyOfType(buffer, SessionCreateReplyT);
+      const res = tryUnwrapReplyOfType(tryUnwrapReply(piMessage), SessionCreateReplyT);
       if (res?.payload instanceof SessionCreateReplyT) {
         this.keepaliveFailureCount = 0; // Reset failure count on successful session creation
         this.stopReconnectTimer(); // Stop any pending reconnection attempts
@@ -334,7 +341,7 @@ export class Session implements ISession {
     }
 
     // everything else is forwarded to onMessage handler
-    if (this.onMessage) this.onMessage(buffer);
+    if (this.onMessage) this.onMessage(piMessage);
   };
 
   sendSessionCreate = (): void => {
@@ -375,3 +382,4 @@ export class Session implements ISession {
     }
   }
 }
+

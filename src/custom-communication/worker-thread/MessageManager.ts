@@ -1,7 +1,8 @@
 // MessageManager - Handles request/reply correlation and message parsing
 
-import { makeUUID } from '../../../utils/uuid';
-import type { ISessionConfig, ISession, ISessionState} from './Session';
+import { Message, Reply, type ProcessInstanceMessageT } from '../../generated/process-instance-message-api';
+import { makeUUID } from '../../utils/uuid';
+import type { ISessionConfig, ISession, ISessionState} from './core/Session';
 
 interface IPendingRequest {
   reject: (error: Error) => void;
@@ -20,6 +21,7 @@ export interface IMessageManager {
   onDisconnected: (() => void) | null;
   onStateChanged: ((state: IMessageManagerState) => void) | null;
 }
+
 export class MessageManager implements IMessageManager {
   private pendingRequests = new Map<string, IPendingRequest>();
   private session!: ISession;
@@ -82,10 +84,20 @@ export class MessageManager implements IMessageManager {
     });
   }
 
-  private onSessionMessage(buffer: Uint8Array): void {
-    // TODO: Implement FlatBuffers message parsing
-    // For now, just log that we received a message
-    console.log('MessageManager: Received message of size:', buffer.byteLength);
+  private onSessionMessage(message: ProcessInstanceMessageT): void {
+    
+    switch (message.messageType) {
+      case Message.Notification:
+        break;
+      case Message.Reply:
+        break;
+      case Message.Request:
+      case Message.TestCommand:
+      case Message.UnknownCommand:
+      default:
+        console.log('MessageManager: Received unsupported message of type:', Message[message.messageType]);
+        break;
+    }
   }
 
   private onSessionDisconnected(): void {

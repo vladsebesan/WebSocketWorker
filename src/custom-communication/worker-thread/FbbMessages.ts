@@ -3,11 +3,11 @@
 // Generic helper to extract message union from any T class
 // 1. searches for the types of accessor
 
-import { Message, ProcessInstanceMessage, ProcessInstanceMessageT, ReplyT, RequestMessage, RequestT } from "../../../generated/process-instance-message-api";
-import type { unionToMessage } from "../../../generated/process-instance-message-api/message";
-import type { unionToRequestMessage } from "../../../generated/process-instance-message-api/request-message";
+import { Message, ProcessInstanceMessage, ProcessInstanceMessageT, ReplyT, RequestMessage, RequestT } from "../../generated/process-instance-message-api";
+import type { unionToMessage } from "../../generated/process-instance-message-api/message";
+import type { unionToRequestMessage } from "../../generated/process-instance-message-api/request-message";
 import * as flatbuffers from 'flatbuffers';
-import { makeUUID } from "../../../utils/uuid";
+import { makeUUID } from "../../utils/uuid";
 
 // 2. for each of those returns the unpacked type
 type IExtractUnionTypes<TFunc> = TFunc extends (
@@ -33,6 +33,15 @@ const getObjectClassName = (obj: any): string => {
 // Deduced types
 type IRequestUnionTypes = IExtractUnionTypes<typeof unionToRequestMessage>;
 type IPiMessageUnionTypes = IExtractUnionTypes<typeof unionToMessage>;
+
+// Unwrapped result of a reply message
+export interface IUnwrappedResult<T> {
+  errorCode?: string;
+  errorState: 'ERROR' | 'SUCCESS';
+  payload?: T;
+  requestId: string;
+  sessionId: string;
+}
 
 // Thread-local builder instance
 let builderInstance: flatbuffers.Builder | null = null;
@@ -73,32 +82,34 @@ export const makeRequestMessageBuffer = (
   return builder.asUint8Array();
 };
 
-export const unwrapPiMessageBuffer = (buffer: Uint8Array): null | ProcessInstanceMessageT => {
+export const tryUnwrapPiMessageBuffer = (buffer: Uint8Array | null): null | ProcessInstanceMessageT => {
+  if(!buffer || buffer.length === 0) 
+    return null;
   try {
     const byteBuffer = new flatbuffers.ByteBuffer(buffer);
     const piMessage = ProcessInstanceMessage.getRootAsProcessInstanceMessage(byteBuffer);
-    if (!piMessage) {
+    if (!piMessage || piMessage.messageType() === Message.NONE) {
       return null;
     }
     return piMessage.unpack();
   } catch (error) {
     console.error('Failed to unwrap message buffer:', error);
-    return null;
   }
+  return null;
 };
 
-export const tryUnwrapReply = (buffer: Uint8Array): null | ReplyT => {
-  const piRoot = unwrapPiMessageBuffer(buffer);
-  if (!!!piRoot) {
+export const tryUnwrapReply = (message: ProcessInstanceMessageT | null): null | ReplyT => {
+  
+  if (!!!message) {
     console.log("wrong PI message format - can't unwrap");
     return null;
   }
-  if (!!!piRoot.message) {
+  if (!!!message.message) {
     console.log('PI message has no content');
     return null;
   }
 
-  const piReply = piRoot.message as ReplyT;
+  const piReply = message.message as ReplyT;
   if (
     piReply.requestId === null ||
     piReply.sessionId === null ||
@@ -114,19 +125,10 @@ export const tryUnwrapReply = (buffer: Uint8Array): null | ReplyT => {
   return piReply;
 };
 
-export interface IUnwrappedResult<T> {
-  errorCode?: string;
-  errorState: 'ERROR' | 'SUCCESS';
-  payload?: T;
-  requestId: string;
-  sessionId: string;
-}
-
 export const tryUnwrapReplyOfType = <T>(
-  buffer: Uint8Array,
+  reply : ReplyT | null,
   expectedClass: new (...args: unknown[]) => T,
 ): IUnwrappedResult<T> | null => {
-  const reply = tryUnwrapReply(buffer);
   if (!!!reply) return null; // failed to unwrap reply
   if (!(reply.message instanceof expectedClass)) return null; // reply message is of different type than expected
 
