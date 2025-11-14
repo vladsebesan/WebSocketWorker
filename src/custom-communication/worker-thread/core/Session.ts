@@ -345,6 +345,7 @@ export class Session implements ISession {
   };
 
   sendSessionDestroy = (): void => {
+    if (!this.state.sessionId) return;
     const reqId = makeUUID();
     const sessionDestroyReq = makeRequestMessageBuffer(new SessionDestroyT(), reqId, this.state.sessionId);
     this.transportLayer.send(sessionDestroyReq); // Placeholder for actual session destruction message
