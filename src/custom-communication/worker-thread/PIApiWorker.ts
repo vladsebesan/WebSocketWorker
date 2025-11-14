@@ -2,7 +2,7 @@ import type { IPiApiConfig, IPiApiState } from '../PiApi';
 import { MessageManager } from './MessageManager';
 import { Session, SessionState } from './Session';
 import { Transport } from './Transport';
-import { Api } from './Api';
+import { Api } from '../ApiDefinition';
 
 export enum WorkerCommandType {
   CONNECT = 'CONNECT',
@@ -132,8 +132,6 @@ class PIApiWorker {
           const sendRequest = command as WorkerSendRequest;
           try {            
             const apiCommand = Api.createCommandFromTransfer(sendRequest.commandType, sendRequest.params);
-
-            //TODO do we need a promise here?
             this.messageManager.sendRequest(apiCommand, sendRequest.requestId, sendRequest.timeoutMs)
               .then((result: any) => this.postSuccessReply(sendRequest.requestId, result))
               .catch((error: any) => this.postErrorReply(sendRequest.requestId, error.message, 'COMMAND_FAILED'));

@@ -1,7 +1,7 @@
 import { Message, ProcessInstanceMessageT, ReplyT } from '../../generated/process-instance-message-api';
 import type { ISessionConfig, ISession, ISessionState} from './Session';
 import {  tryUnwrapReply } from './FbbMessages';
-import type { IApiCommand } from './IApi';
+import type { IApiCommand } from '../IApiDefinition';
 
 interface IPendingRequest {
   reject: (error: Error) => void;

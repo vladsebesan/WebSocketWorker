@@ -6,8 +6,8 @@ import { WorkerCommandType, WorkerEventType, type WorkerCommand, type WorkerEven
 import { makeUUID } from '../utils/uuid';
 import { SessionState } from './worker-thread/Session';
 import type { IFlowModel, IToolboxModel } from '../interfaces/IFlow';
-import { Api } from './worker-thread/Api';
-import type { IApiCommand } from './worker-thread/IApi';
+import { Api } from './ApiDefinition';
+import type { IApiCommand } from './IApiDefinition';
 
 export interface IPiApiConfig  extends IMessageManagerConfig {}
 
@@ -30,10 +30,9 @@ export class PiApi {
   private state: IPiApiState;
   private worker: null | Worker = null;
   private config: IPiApiConfig;
-  
+  private pendingRequests = new Map<string, IPendingRequest>();
   //private stateChangeCallbacks = new Set<IPIApiNotificationCallback<IPiApiState>>();
   //private subscriptions = new Map<string, IActiveSubscription>();
-  private pendingRequests = new Map<string, IPendingRequest>();
 
   constructor(config: IPiApiConfig) {
     this.config = config;

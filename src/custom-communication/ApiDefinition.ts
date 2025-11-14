@@ -1,10 +1,10 @@
-import { FlowGetReplyT, FlowGetT, FlowLinkEntryT, FlowModuleEntryT, FlowPortT, FlowStartType, FlowStateDetailsT, type ReplyT, type ToolboxGetReplyT } from '../../generated/process-instance-message-api';
-import { ToolboxGetT } from '../../generated/process-instance-message-api/toolbox-get';
-import { type IFlowModel,type IFlowModule,type IToolboxEntry,type IToolboxModel,type IPort, Visibility, type IFlowModuleLink, type IFlowStateDetails, EnumFlowStartType } from '../../interfaces/IFlow';
-import { makeRequestMessageBuffer } from './FbbMessages';
-import { createApiFromCommands, type IApiCommand } from './IApi';
+import { FlowGetReplyT, FlowGetT, FlowLinkEntryT, FlowModuleEntryT, FlowPortT, FlowStartType, FlowStateDetailsT, type ReplyT, type ToolboxGetReplyT } from '../generated/process-instance-message-api';
+import { ToolboxGetT } from '../generated/process-instance-message-api/toolbox-get';
+import { type IFlowModel,type IFlowModule,type IToolboxEntry,type IToolboxModel,type IPort, Visibility, type IFlowModuleLink, type IFlowStateDetails, EnumFlowStartType } from '../interfaces/IFlow';
+import { makeRequestMessageBuffer } from './worker-thread/FbbMessages';
+import { createApiFromCommands, type IApiCommand } from './IApiDefinition';
 
-import {Visibility as FBVisibility} from '../../generated/types-common-api';
+import {Visibility as FBVisibility} from '../generated/types-common-api';
 
 export interface IToolboxGetParams {} // match the param of the fbs command
 

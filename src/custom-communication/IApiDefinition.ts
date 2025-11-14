@@ -1,4 +1,4 @@
-import type { ReplyT } from "../../generated/process-instance-message-api";
+import type { ReplyT } from "../generated/process-instance-message-api";
 
 export interface IApiCommand<TParams, TResult> {
   readonly commandType: string;
