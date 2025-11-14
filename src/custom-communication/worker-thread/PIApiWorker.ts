@@ -32,6 +32,7 @@ export interface WorkerSendRequest {
   type: WorkerCommandType.SEND_REQUEST;
   commandType: string;
   params: any;
+  timeoutMs: number;
 }
 
 export interface WorkerReply<T> {
@@ -131,7 +132,9 @@ class PIApiWorker {
           const sendRequest = command as WorkerSendRequest;
           try {            
             const apiCommand = Api.createCommandFromTransfer(sendRequest.commandType, sendRequest.params);
-            this.messageManager.executeCommand(apiCommand, sendRequest.requestId)
+
+            //TODO do we need a promise here?
+            this.messageManager.sendRequest(apiCommand, sendRequest.requestId, sendRequest.timeoutMs)
               .then((result: any) => this.postSuccessReply(sendRequest.requestId, result))
               .catch((error: any) => this.postErrorReply(sendRequest.requestId, error.message, 'COMMAND_FAILED'));
           } catch (error) {

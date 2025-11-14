@@ -1,5 +1,4 @@
 import { Message, ProcessInstanceMessageT, ReplyT } from '../../generated/process-instance-message-api';
-import { makeUUID } from '../../utils/uuid';
 import type { ISessionConfig, ISession, ISessionState} from './Session';
 import {  tryUnwrapReply } from './FbbMessages';
 import type { IApiCommand } from './IApi';
@@ -18,8 +17,7 @@ export interface IMessageManagerState extends ISessionState {}
 export interface IMessageManager {
   connect(config: ISessionConfig): void;
   disconnect(): void;
-  send<T>(requestBuffer: Uint8Array): Promise<T>;
-  executeCommand<TParams, TResult>(command: IApiCommand<TParams, TResult>, requestId: string): Promise<TResult>;
+  sendRequest<TParams, TResult>(command: IApiCommand<TParams, TResult>, requestId: string, timeoutMs: number): Promise<TResult>;
   onConnected: (() => void) | null;
   onDisconnected: (() => void) | null;
   onStateChanged: ((state: IMessageManagerState) => void) | null;
@@ -40,11 +38,11 @@ export class MessageManager implements IMessageManager {
     if (!this.session) {
       throw new Error('Session is not initialized');
     }
-    this.session.connect(config);
     this.session.onMessage = this.onSessionMessage.bind(this);
     this.session.onDisconnected = this.onSessionDisconnected.bind(this);
     this.session.onConnected = this.onSessionConnected.bind(this);
     this.session.onStateChanged = this.onSessionStateChanged.bind(this);
+    this.session.connect(config);
   }
 
   public disconnect(): void {
@@ -54,32 +52,20 @@ export class MessageManager implements IMessageManager {
     }
   }
 
-  private executeApiCommand<TParams, TResult>(
-    command: IApiCommand<TParams, TResult>,
-    requestId: string,
-    sessionId: string
-  ): {
-    requestBuffer: Uint8Array;
-    parseReply: (replyBuffer: Uint8Array) => TResult | null;
-  } {
-    return {
-      requestBuffer: command.serialize(requestId, sessionId),
-      parseReply: (replyBuffer: Uint8Array) => command.deserialize(replyBuffer)
-    };
-  }
-
-  public async executeCommand<TParams, TResult>(
+  public async sendRequest<TParams, TResult>(
     command: IApiCommand<TParams, TResult>, 
-    requestId: string
+    requestId: string,
+    timeoutMs: number
   ): Promise<TResult> {
     const sessionId = this.session.sessionId || 'unknown';
-    const { requestBuffer, parseReply } = this.executeApiCommand(command, requestId, sessionId);
-    
+    const requestBuffer = command.serialize(requestId, sessionId);
+    const parseReply = command.deserialize.bind(command);
+
     return new Promise<TResult>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingRequests.delete(requestId);
         reject(new Error(`Command ${command.commandType} timed out`));
-      }, 30000);
+      }, timeoutMs);
 
       this.pendingRequests.set(requestId, {
         resolve: (data: any) => {
@@ -91,7 +77,7 @@ export class MessageManager implements IMessageManager {
           reject(error);
         },
         timeout,
-        parseReply
+        parseReply: parseReply
       });
 
       this.session.send(requestBuffer);
@@ -104,31 +90,6 @@ export class MessageManager implements IMessageManager {
       pending.reject(new Error('Connection closed'));
     }
     this.pendingRequests.clear();
-  }
-
-  public send<T>(requestBuffer: Uint8Array): Promise<T> {
-
-    if(!this.session) {
-      return Promise.reject(new Error('Session is not initialized'));
-    }
-
-    const requestId = makeUUID();
-
-    return new Promise<T>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pendingRequests.delete(requestId);
-        reject(new Error('Request timeout'));
-      }, 30000); // 30 second timeout
-
-      this.pendingRequests.set(requestId, {
-        reject,
-        resolve: (data: unknown) => resolve(data as T),
-        timeout,
-      });
-
-      // Send the request
-      this.session!.send(requestBuffer);
-    });
   }
 
   private onSessionMessage(message: ProcessInstanceMessageT): void {   

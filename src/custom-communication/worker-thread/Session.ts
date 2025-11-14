@@ -35,6 +35,7 @@ export interface ISession {
   onDisconnected: (() => void) | null;
   onStateChanged: ((state: ISessionState) => void) | null;
   send: (buffer: Uint8Array) => void;
+  readonly sessionId: string | null;
 }
 
 export class Session implements ISession {

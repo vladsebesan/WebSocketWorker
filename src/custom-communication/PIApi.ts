@@ -22,7 +22,7 @@ export interface IPiApiState extends IMessageManagerState {}
 interface IPendingRequest {
   reject: (error: Error) => void;
   resolve: (data: any) => void;
-  timeout: NodeJS.Timeout;
+  timeoutMs: number;
 }
 
 const WORKER_URL = new URL('./worker-thread/PIApiWorker.ts', import.meta.url);
@@ -80,15 +80,15 @@ export class PiApi {
 
   public async getToolbox(): Promise<IToolboxModel> {
     const command = Api.ToolboxGet({});
-    return this.sendApiCommand(command, 10000);
+    return this.sendRequest(command, 10000);
   }
 
   public async getFlow(): Promise<IFlowModel> {
     const command = Api.FlowGet({});
-    return this.sendApiCommand(command, 10000);
+    return this.sendRequest(command, 10000);
   }
 
-  private async sendApiCommand<TParams, TResult>(
+  private async sendRequest<TParams, TResult>(
     command: IApiCommand<TParams, TResult>,
     timeoutMs: number = 5000
   ): Promise<TResult> {
@@ -111,14 +111,15 @@ export class PiApi {
           clearTimeout(timeout);
           reject(error);
         },
-        timeout
+        timeoutMs
       });
 
       // Send command to worker - the command object contains everything needed
       const workerCommand: WorkerCommand = {
         requestId,
         type: WorkerCommandType.SEND_REQUEST,
-        ...command // Send the entire command object
+        ...command, // Send the entire command object
+        timeoutMs
       };
 
       if (this.worker) {
@@ -153,7 +154,6 @@ export class PiApi {
         }
         const pending = this.pendingRequests.get(response.requestId);
         if (pending) {
-          clearTimeout(pending.timeout);
           this.pendingRequests.delete(response.requestId);
           if (response.type === WorkerEventType.REPLY) {
             if(response.isError) {
@@ -186,7 +186,6 @@ export class PiApi {
   private cleanup(): void {
     // Cancel all pending requests
     for (const [, pending] of this.pendingRequests) {
-      clearTimeout(pending.timeout);
       pending.reject(new Error('Connection closed'));
     }
     this.pendingRequests.clear();
@@ -210,7 +209,7 @@ export class PiApi {
       this.pendingRequests.set(command.requestId, {
         reject,
         resolve,
-        timeout,
+        timeoutMs: 120000,
       });
 
       this.worker!.postMessage(command);
