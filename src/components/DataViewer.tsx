@@ -1,27 +1,29 @@
 import { useEffect } from "react";
-import { usePIApi } from "../custom-communication/PIApi";
-import type { IFlowModel } from "../interfaces/IFlow";
+import type { IFlowModel, IToolboxModel } from "../interfaces/IFlow";
+import { usePiApi } from "../custom-communication/PiApi";
 
 export const DataViewer = () : JSX.Element => {
 
- const piApi = usePIApi();
+ const piApi = usePiApi();
   
   useEffect(() => {
     // Only try to connect when piApi is available
     if (piApi) {
       piApi.connect().then(() => {
         console.log('DataViewer connected');
-
-        piApi.getToolbox().then((toolbox: IFlowModel) => {
+        piApi.getToolbox().then((toolbox: IToolboxModel) => {
           console.log('DataViewer received toolbox:', toolbox); 
+        })
+        piApi.getFlow().then((flow: IFlowModel) => {
+                            console.log('DataViewer received flow:', flow); 
+                        }).catch((error) => {
+                            console.error('DataViewer failed to get flow:', error);
+                        });
         }).catch((error) => {
-          console.error('DataViewer failed to get toolbox:', error);
-        });
-
-      }).catch((error) => {
-        console.error('DataViewer connection failed:', error);
-      })
-    }
+          console.error('DataViewer connection failed:', error);
+        }
+      );
+    }    
   }, [piApi]); // Run when piApi becomes available
 
   // Handle loading state while piApi is initializing

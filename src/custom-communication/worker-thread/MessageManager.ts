@@ -1,26 +1,25 @@
-// MessageManager - Handles request/reply correlation and message parsing
-
-import { Message, ToolboxGetT, type ProcessInstanceMessageT } from '../../generated/process-instance-message-api';
+import { Message, ProcessInstanceMessageT, ReplyT } from '../../generated/process-instance-message-api';
 import { makeUUID } from '../../utils/uuid';
-import type { ISessionConfig, ISession, ISessionState} from './core/Session';
-import { makeRequestMessageBuffer } from './FbbMessages';
-import { WorkerCommandType, type WorkerSendRequest } from './PIApiWorker';
-import * as flatbuffers from 'flatbuffers';
+import type { ISessionConfig, ISession, ISessionState} from './Session';
+import {  tryUnwrapReply } from './FbbMessages';
+import type { IApiCommand } from './IApi';
 
 interface IPendingRequest {
   reject: (error: Error) => void;
   resolve: (data: unknown) => void;
   timeout: NodeJS.Timeout;
+  parseReply: (reply: ReplyT) => any;
 }
 
 export interface IMessageManagerConfig extends ISessionConfig {}
+
 export interface IMessageManagerState extends ISessionState {}
 
 export interface IMessageManager {
   connect(config: ISessionConfig): void;
   disconnect(): void;
   send<T>(requestBuffer: Uint8Array): Promise<T>;
-  send2(send: WorkerSendRequest): void; //maybe return promise?
+  executeCommand<TParams, TResult>(command: IApiCommand<TParams, TResult>, requestId: string): Promise<TResult>;
   onConnected: (() => void) | null;
   onDisconnected: (() => void) | null;
   onStateChanged: ((state: IMessageManagerState) => void) | null;
@@ -55,8 +54,52 @@ export class MessageManager implements IMessageManager {
     }
   }
 
+  private executeApiCommand<TParams, TResult>(
+    command: IApiCommand<TParams, TResult>,
+    requestId: string,
+    sessionId: string
+  ): {
+    requestBuffer: Uint8Array;
+    parseReply: (replyBuffer: Uint8Array) => TResult | null;
+  } {
+    return {
+      requestBuffer: command.serialize(requestId, sessionId),
+      parseReply: (replyBuffer: Uint8Array) => command.deserialize(replyBuffer)
+    };
+  }
+
+  public async executeCommand<TParams, TResult>(
+    command: IApiCommand<TParams, TResult>, 
+    requestId: string
+  ): Promise<TResult> {
+    const sessionId = this.session.sessionId || 'unknown';
+    const { requestBuffer, parseReply } = this.executeApiCommand(command, requestId, sessionId);
+    
+    return new Promise<TResult>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`Command ${command.commandType} timed out`));
+      }, 30000);
+
+      this.pendingRequests.set(requestId, {
+        resolve: (data: any) => {
+          clearTimeout(timeout);
+          resolve(data as TResult);
+        },
+        reject: (error: Error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+        timeout,
+        parseReply
+      });
+
+      this.session.send(requestBuffer);
+    });
+  }
+
   private cancelAllPendingRequests(): void {
-    for (const [requestId, pending] of this.pendingRequests) {
+    for (const [, pending] of this.pendingRequests) {
       clearTimeout(pending.timeout);
       pending.reject(new Error('Connection closed'));
     }
@@ -88,30 +131,27 @@ export class MessageManager implements IMessageManager {
     });
   }
 
-  public send2(zzz : WorkerSendRequest): void /*maybe return promise?*/{
-    // if(zzz.type !== WorkerCommandType.SEND_REQUEST)
-    //    throw new Error(`MessageManager: Invalid command type for send2: ${zzz.type}`);
-
-    if(!this.session) {
-      throw new Error('Session is not initialized');
-    } 
-    console.log("MessageManager: send2 called", zzz);
-
-    const tboxGet = new ToolboxGetT();
-    const buff = makeRequestMessageBuffer(tboxGet, zzz.requestId, "as");
-    this.session.send(buff);
-  }
-
-  private onSessionMessage(message: ProcessInstanceMessageT): void {
-    
+  private onSessionMessage(message: ProcessInstanceMessageT): void {   
     switch (message.messageType) {
-      case Message.Notification:
-        break;
       case Message.Reply:
+        const reply = tryUnwrapReply(message);
+        if (reply?.requestId) {
+          const requestId = reply.requestId.toString();
+          const pending = this.pendingRequests.get(requestId);
+          if (pending) {
+            this.pendingRequests.delete(requestId);
+            const result = pending.parseReply(reply);               // Use command-specific parser
+            if (result !== null) {
+              pending.resolve(result);
+            } else {
+              pending.reject(new Error('Failed to parse command reply'));
+            }
+          }
+        }
         break;
-      case Message.Request:
-      case Message.TestCommand:
-      case Message.UnknownCommand:
+      case Message.Notification:
+        // Handle notifications
+        break;
       default:
         console.log('MessageManager: Received unsupported message of type:', Message[message.messageType]);
         break;

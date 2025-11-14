@@ -143,3 +143,10 @@ export const tryUnwrapReplyOfType = <T>(
 };
 
 
+export type FbbCollectionReader<T> = (index: number) => T;
+export declare class FbbCollection<T> {
+    constructor(fbbContainer: unknown, transformer: FbbCollectionReader<T>, size: number);
+    map<DestType>(mapper: (arg: T) => DestType): DestType[];
+    private container;
+    private collectionSize;
+}

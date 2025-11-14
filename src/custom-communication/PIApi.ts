@@ -5,28 +5,13 @@ import type { IMessageManagerConfig, IMessageManagerState } from './worker-threa
 import { WorkerCommandType, WorkerEventType, type WorkerCommand, type WorkerEvent } from './worker-thread/PIApiWorker';
 import { makeUUID } from '../utils/uuid';
 import { SessionState } from './worker-thread/Session';
-import type { IFlowModel } from '../interfaces/IFlow';
-import { ToolboxGetT } from '../generated/process-instance-message-api';
+import type { IFlowModel, IToolboxModel } from '../interfaces/IFlow';
+import { Api } from './worker-thread/Api';
+import type { IApiCommand } from './worker-thread/IApi';
 
-export interface IPiApiConfig  extends IMessageManagerConfig {
-  // maxReconnectAttempts: number;
-  // reconnectIntervalMs: number;
-  // sessionKeepaliveIntervalMs: number;
-  // maxKeepaliveFailures: number; // Add optional maxKeepaliveFailures
-  // url: string;
-}
+export interface IPiApiConfig  extends IMessageManagerConfig {}
 
-export interface IPiApiState extends IMessageManagerState {
-  // reconnectAttemptsLeft: number;
-  // sessionId: null | string;
-  // sessionState: SessionState;
-}
-
-interface IPendingRequest {
-  reject: (error: Error) => void;
-  resolve: (data: any) => void;
-  timeout: NodeJS.Timeout;
-}
+export interface IPiApiState extends IMessageManagerState {}
 
 // interface IActiveSubscription {
 //   callback: IPIApiNotificationCallback<any>;
@@ -34,9 +19,15 @@ interface IPendingRequest {
 //   unsubscribeCommandType: WorkerCommandType;
 // }
 
+interface IPendingRequest {
+  reject: (error: Error) => void;
+  resolve: (data: any) => void;
+  timeout: NodeJS.Timeout;
+}
+
 const WORKER_URL = new URL('./worker-thread/PIApiWorker.ts', import.meta.url);
 
-export class PIApi {
+export class PiApi {
   private state: IPiApiState;
   private worker: null | Worker = null;
   private config: IPiApiConfig;
@@ -51,14 +42,14 @@ export class PIApi {
       reconnectAttemptsLeft: config.maxReconnectAttempts,
       sessionId: null,
       sessionState: SessionState.DISCONNECTED,
-    }
+    };
+    console.log('PiApi initialized with state:', this.state);
     try {
       this.worker = new Worker(WORKER_URL, { type: 'module' });
       this.worker.addEventListener('message', this.onWorkerEvent);
-      this.worker.addEventListener('error', this.handleWorkerError);
     } catch (error) {
       throw new Error(
-        `Failed to create PIApi worker: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to create PiApi worker: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -85,6 +76,60 @@ export class PIApi {
       this.worker.terminate();
       this.worker = null;
     }
+  }
+
+  public async getToolbox(): Promise<IToolboxModel> {
+    const command = Api.ToolboxGet({});
+    return this.sendApiCommand(command, 10000);
+  }
+
+  public async getFlow(): Promise<IFlowModel> {
+    const command = Api.FlowGet({});
+    return this.sendApiCommand(command, 10000);
+  }
+
+  private async sendApiCommand<TParams, TResult>(
+    command: IApiCommand<TParams, TResult>,
+    timeoutMs: number = 5000
+  ): Promise<TResult> {
+    const requestId = makeUUID();
+    
+    return new Promise<TResult>((resolve, reject) => {
+      // Set up timeout
+      const timeout = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`API command ${command.commandType} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      // Store pending request
+      this.pendingRequests.set(requestId, {
+        resolve: (data: TResult) => {
+          clearTimeout(timeout);
+          resolve(data);
+        },
+        reject: (error: Error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+        timeout
+      });
+
+      // Send command to worker - the command object contains everything needed
+      const workerCommand: WorkerCommand = {
+        requestId,
+        type: WorkerCommandType.SEND_REQUEST,
+        ...command // Send the entire command object
+      };
+
+      if (this.worker) {
+        this.worker.postMessage(workerCommand);
+        console.log(`PIApi: Sent API command ${command.commandType} with requestId: ${requestId}`);
+      } else {
+        this.pendingRequests.delete(requestId);
+        clearTimeout(timeout);
+        reject(new Error('Worker not initialized'));
+      }
+    });
   }
 
   private onWorkerEvent = (event: MessageEvent): void => {
@@ -133,14 +178,14 @@ export class PIApi {
         // }
         break;
       default:
-        console.log('PIApi: Unsupported worker event:', response.type);
+        console.log('PIApi: Unsupported worker event:', (response as any).type);
         break;
     }  
   };
 
   private cleanup(): void {
     // Cancel all pending requests
-    for (const [requestId, pending] of this.pendingRequests) {
+    for (const [, pending] of this.pendingRequests) {
       clearTimeout(pending.timeout);
       pending.reject(new Error('Connection closed'));
     }
@@ -169,17 +214,6 @@ export class PIApi {
       });
 
       this.worker!.postMessage(command);
-    });
-  }
-
-  public async getToolbox(): Promise<IFlowModel> {
-    console.log("PIApi: getToolbox called");
-    const requestId = makeUUID();
-    const payload = new ToolboxGetT();
-    return this.sendCommandInternal({
-      requestId,
-      type: WorkerCommandType.SEND_REQUEST,
-      payload,
     });
   }
 
@@ -245,9 +279,8 @@ export class PIApi {
   // }
 }
 
-// React hook for using PIApi (similar to your current useViewerChannel)
-export const usePIApi = (): PIApi => {
-  const [piApi, setPiApi] = useState<PIApi | null>(null);
+export const usePiApi = (): PiApi => {
+  const [piApi, setPiApi] = useState<PiApi | null>(null);
   const isInitialized = useRef(false);
 
   // Helper function to get WebSocket URL (similar to your current getWebsocketUrl)
@@ -266,14 +299,15 @@ export const usePIApi = (): PIApi => {
     if (!isInitialized.current) {
       isInitialized.current = true;
       
-      const fullConfig: IPIApiConfig = {
+      const fullConfig: IPiApiConfig = {
         maxReconnectAttempts: 3,
         reconnectIntervalMs: 1000,
         sessionKeepaliveIntervalMs: 1000,
+        maxKeepaliveFailures: 3,
         url: getPiSocketUrl(),
       };
 
-      const newPiApi = new PIApi(fullConfig);
+      const newPiApi = new PiApi(fullConfig);
       
       // Auto-connect like your current ViewerChannel
       // newPiApi.connect().catch(() => {

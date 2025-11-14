@@ -101,6 +101,10 @@ export class Session implements ISession {
     this.transportLayer.send(buffer);
   }
 
+  public get sessionId(): string | null {
+    return this.state.sessionId;
+  }
+
   private startKeepaliveTimer = (): void => {
     if (!this.config || this.keepaliveTimer !== null) return;
 

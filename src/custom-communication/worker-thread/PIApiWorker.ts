@@ -1,7 +1,8 @@
-import type { IPiApiConfig, IPiApiState } from '../PIApi';
+import type { IPiApiConfig, IPiApiState } from '../PiApi';
 import { MessageManager } from './MessageManager';
 import { Session, SessionState } from './Session';
 import { Transport } from './Transport';
+import { Api } from './Api';
 
 export enum WorkerCommandType {
   CONNECT = 'CONNECT',
@@ -28,8 +29,9 @@ export interface WorkerDisconnect{
 
 export interface WorkerSendRequest {
   requestId: string;  
-  type: WorkerCommandType;
-  payload?: unknown;
+  type: WorkerCommandType.SEND_REQUEST;
+  commandType: string;
+  params: any;
 }
 
 export interface WorkerReply<T> {
@@ -127,11 +129,19 @@ class PIApiWorker {
       case WorkerCommandType.SEND_REQUEST:
         {
           const sendRequest = command as WorkerSendRequest;
-          this.messageManager.send2(sendRequest)
+          try {            
+            const apiCommand = Api.createCommandFromTransfer(sendRequest.commandType, sendRequest.params);
+            this.messageManager.executeCommand(apiCommand, sendRequest.requestId)
+              .then((result: any) => this.postSuccessReply(sendRequest.requestId, result))
+              .catch((error: any) => this.postErrorReply(sendRequest.requestId, error.message, 'COMMAND_FAILED'));
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Failed to recreate command';
+            this.postErrorReply(sendRequest.requestId, errorMessage, 'COMMAND_RECREATION_FAILED');
+          }
         }
         break;
       default:
-        console.warn(`PiApiWorker: Unknown command type received: ${command.type}`);
+        console.warn(`PiApiWorker: Unknown command type received: ${(command as any).type}`);
         break;
     }
   };
@@ -154,6 +164,9 @@ class PIApiWorker {
       isError: false,
       data,
     };
+
+    console.log('Posting success reply:', response);
+
     this.postToMainThread(response);
   }
 
