@@ -22,7 +22,6 @@ export interface IPiApiState extends IMessageManagerState {}
 interface IPendingRequest {
   reject: (error: Error) => void;
   resolve: (data: any) => void;
-  timeoutMs: number;
 }
 
 const WORKER_URL = new URL('./worker-thread/PIApiWorker.ts', import.meta.url);
@@ -95,23 +94,14 @@ export class PiApi {
     const requestId = makeUUID();
     
     return new Promise<TResult>((resolve, reject) => {
-      // Set up timeout
-      const timeout = setTimeout(() => {
-        this.pendingRequests.delete(requestId);
-        reject(new Error(`API command ${command.commandType} timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-
-      // Store pending request
+      // Store pending request - timeout handled by worker
       this.pendingRequests.set(requestId, {
         resolve: (data: TResult) => {
-          clearTimeout(timeout);
           resolve(data);
         },
         reject: (error: Error) => {
-          clearTimeout(timeout);
           reject(error);
-        },
-        timeoutMs
+        }
       });
 
       // Send command to worker - the command object contains everything needed
@@ -127,7 +117,6 @@ export class PiApi {
         console.log(`PIApi: Sent API command ${command.commandType} with requestId: ${requestId}`);
       } else {
         this.pendingRequests.delete(requestId);
-        clearTimeout(timeout);
         reject(new Error('Worker not initialized'));
       }
     });
@@ -201,15 +190,10 @@ export class PiApi {
     }
 
     return new Promise<T>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pendingRequests.delete(command.requestId);
-        reject(new Error('Request timeout'));
-      }, 120000); // 120 second timeout
-
+      // Store pending request - timeout handled by worker
       this.pendingRequests.set(command.requestId, {
         reject,
-        resolve,
-        timeoutMs: 120000,
+        resolve
       });
 
       this.worker!.postMessage(command);
