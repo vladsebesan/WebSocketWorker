@@ -299,14 +299,13 @@ export class Session implements ISession {
       return;
     }
 
-
     //if this is a SessionKeepaliveReply message handle it here
     {
       const res = tryUnwrapReplyOfType(tryUnwrapReply(piMessage), SessionKeepaliveReplyT);
       if (res?.payload instanceof SessionKeepaliveReplyT) {
 
         // Validate that the keepalive reply sessionId matches our current session
-        if (res.sessionId !== this.state.sessionId) {
+        if (this.state.sessionId && res.sessionId !== this.state.sessionId) {
           console.warn(`Received keepalive reply with mismatched sessionId. Expected: ${this.state.sessionId}, Received: ${res.sessionId}`);
           return; //we still ingest the message but reject the keepalive reply
         }
@@ -316,7 +315,7 @@ export class Session implements ISession {
           sessionId: res.sessionId,
           sessionState: SessionState.CONNECTED,
         });
-        console.log('Keepalive response received');
+        //console.log('Keepalive response received');
         return;
       }
     }
@@ -345,7 +344,7 @@ export class Session implements ISession {
   };
 
   sendSessionCreate = (): void => {
-    const sessionId = makeUUID() + 'new session'; //PI might override this
+    const sessionId = '@worker_session_' + makeUUID();
     const reqId = makeUUID();
     const buff = makeRequestMessageBuffer(new SessionCreateT(), reqId, sessionId);
     this.transportLayer.send(buff); // Placeholder for actual session creation message
@@ -364,7 +363,7 @@ export class Session implements ISession {
     const reqId = makeUUID();
     const buff = makeRequestMessageBuffer(new SessionKeepaliveT(), reqId, this.state.sessionId);
     this.transportLayer.send(buff); // Placeholder for actual session keepalive message
-    console.log('Keepalive message sent');
+    //console.log('Keepalive message sent');
   };
 
   updateState(newState: ISessionState) {

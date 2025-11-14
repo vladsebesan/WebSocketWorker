@@ -1,8 +1,11 @@
 // MessageManager - Handles request/reply correlation and message parsing
 
-import { Message, Reply, type ProcessInstanceMessageT } from '../../generated/process-instance-message-api';
+import { Message, ToolboxGetT, type ProcessInstanceMessageT } from '../../generated/process-instance-message-api';
 import { makeUUID } from '../../utils/uuid';
 import type { ISessionConfig, ISession, ISessionState} from './core/Session';
+import { makeRequestMessageBuffer } from './FbbMessages';
+import { WorkerCommandType, type WorkerSendRequest } from './PIApiWorker';
+import * as flatbuffers from 'flatbuffers';
 
 interface IPendingRequest {
   reject: (error: Error) => void;
@@ -17,6 +20,7 @@ export interface IMessageManager {
   connect(config: ISessionConfig): void;
   disconnect(): void;
   send<T>(requestBuffer: Uint8Array): Promise<T>;
+  send2(send: WorkerSendRequest): void; //maybe return promise?
   onConnected: (() => void) | null;
   onDisconnected: (() => void) | null;
   onStateChanged: ((state: IMessageManagerState) => void) | null;
@@ -33,7 +37,7 @@ export class MessageManager implements IMessageManager {
     this.session = session;    
   }
 
-  public connect(config: ISessionConfig): void {
+  public connect(config: IMessageManagerConfig): void {
     if (!this.session) {
       throw new Error('Session is not initialized');
     }
@@ -82,6 +86,20 @@ export class MessageManager implements IMessageManager {
       // Send the request
       this.session!.send(requestBuffer);
     });
+  }
+
+  public send2(zzz : WorkerSendRequest): void /*maybe return promise?*/{
+    // if(zzz.type !== WorkerCommandType.SEND_REQUEST)
+    //    throw new Error(`MessageManager: Invalid command type for send2: ${zzz.type}`);
+
+    if(!this.session) {
+      throw new Error('Session is not initialized');
+    } 
+    console.log("MessageManager: send2 called", zzz);
+
+    const tboxGet = new ToolboxGetT();
+    const buff = makeRequestMessageBuffer(tboxGet, zzz.requestId, "as");
+    this.session.send(buff);
   }
 
   private onSessionMessage(message: ProcessInstanceMessageT): void {

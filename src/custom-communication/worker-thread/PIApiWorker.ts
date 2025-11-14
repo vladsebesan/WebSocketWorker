@@ -1,106 +1,180 @@
-// PIApiWorker.ts - Main worker entry point (replaces ViewerChannelWorker)
-import type { IPIApiError, IPIApiState } from '../shared/PIApiTypes';
-import { PIApiWorkerResponseType, type IPIApiGenericCommand, type IPIApiWorkerResponse } from '../shared/WorkerProtocol';
-
-import { PIApiWorkerCommandType } from '../shared/WorkerProtocol';
+import type { IPiApiConfig, IPiApiState } from '../PIApi';
 import { MessageManager } from './MessageManager';
-import { Session } from './Session';
+import { Session, SessionState } from './Session';
 import { Transport } from './Transport';
 
-/**
- * Main PIApi worker class - handles all communication with the PI backend
- * This replaces the ViewerChannelWorker but is much more sophisticated
- */
+export enum WorkerCommandType {
+  CONNECT = 'CONNECT',
+  DISCONNECT = 'DISCONNECT',
+  SEND_REQUEST = 'SEND_REQUEST',
+}
+
+export enum WorkerEventType {
+  STATE_CHANGED = 'STATE_CHANGED',
+  REPLY = 'REPLY', // data contains Error or Reply data
+  NOTIFICATION = 'NOTIFICATION',
+}
+
+export interface WorkerConnect {
+  requestId: string;  
+  config: IPiApiConfig;
+  type: WorkerCommandType.CONNECT;
+}
+
+export interface WorkerDisconnect{
+  requestId: string;  
+  type: WorkerCommandType.DISCONNECT;
+}
+
+export interface WorkerSendRequest {
+  requestId: string;  
+  type: WorkerCommandType;
+  payload?: unknown;
+}
+
+export interface WorkerReply<T> {
+  requestId: string; 
+  data?: T; //data might be null for errors OR void replies
+  type: WorkerEventType.REPLY;
+  isError: boolean;
+  errorMessage?: string; //null if no error
+  errorCode?: string; //null if no error
+}
+
+export interface WorkerNotification<T> {
+  data: T;
+  type: WorkerEventType.NOTIFICATION;
+}
+
+export interface WorkerStateChangedEvent{
+  state: IPiApiState;
+  type: WorkerEventType.STATE_CHANGED;
+}
+
+export type WorkerCommand =
+  | WorkerConnect
+  | WorkerDisconnect
+  | WorkerSendRequest;
+
+
+export type WorkerEvent = 
+  | WorkerReply<unknown>
+  | WorkerNotification<unknown>
+  | WorkerStateChangedEvent;
+
 class PIApiWorker {
   private messageManager!: MessageManager;
+  
+  constructor() {
+    this.messageManager = new MessageManager(new Session(new Transport()));
+    this.messageManager.onStateChanged = this.onMessageManagerStateChange.bind(this);
+    self.addEventListener('message', this.recvFromMainThread);
+  }
 
-  private handleMainThreadMessage = (event: MessageEvent): void => {
-    const command = event.data as IPIApiGenericCommand;
+  private resolvePromise(request: WorkerConnect | WorkerDisconnect) {
 
+    let transitionalStates: SessionState[] = [];
+    let expectedState: SessionState;
+    
+    if(request.type === WorkerCommandType.CONNECT) {
+      transitionalStates.push(SessionState.CONNECTING, SessionState.SESSION_INIT);
+      expectedState = SessionState.CONNECTED;
+    }
+    else {
+      expectedState = SessionState.DISCONNECTED;
+    }
+
+    this.messageManager.onStateChanged = (state) => {
+      //1. Notify main thread of all state changes
+      this.onMessageManagerStateChange(state); 
+
+      //2. Handle connection promise resolution (ignoring transitional states)
+      if(transitionalStates.includes(state.sessionState)) {
+        return;  // Still in transitional state, do nothing
+      }
+      //3. No more in expected transitional states, now we should be either in the expected state or a failure state
+      //or there is a failure
+      if(state.sessionState === expectedState) {
+        this.postSuccessReply(request.requestId, undefined);
+      }
+      else {
+        const errorMessage = `Failed to ${request.type === WorkerCommandType.CONNECT ? 'connect' : 'disconnect'}. Current state: ${SessionState[state.sessionState]}`;
+        const errorCode = 'COMM_ERROR';
+        this.postErrorReply(request.requestId, errorMessage, errorCode);
+      }
+      //4. Restore normal state change handling
+      this.messageManager.onStateChanged = this.onMessageManagerStateChange.bind(this);
+    }
+  }
+
+  private recvFromMainThread = (event: MessageEvent): void => {
+    const command = event.data as WorkerCommand;
     switch (command.type) {
-      // Connection management (similar to your current ViewerChannelWorker)
-      case PIApiWorkerCommandType.CONNECT:
-        this.handleConnect(command);
+      case WorkerCommandType.CONNECT:
+        {
+          const connect = command as WorkerConnect;
+          this.resolvePromise(connect); //hijack session state notifications until connected
+          this.messageManager.connect(connect.config);
+        }
         break;
-      case PIApiWorkerCommandType.DISCONNECT:
-        this.handleDisconnect(command);
+      case WorkerCommandType.DISCONNECT:
+        {
+          const disconnect = command as WorkerDisconnect;
+          this.resolvePromise(disconnect); //hijack session state notifications until connected
+          this.messageManager.disconnect();
+        }
         break;
-
-      // All other PI API commands are routed through the command router
+      case WorkerCommandType.SEND_REQUEST:
+        {
+          const sendRequest = command as WorkerSendRequest;
+          this.messageManager.send2(sendRequest)
+        }
+        break;
       default:
+        console.warn(`PiApiWorker: Unknown command type received: ${command.type}`);
         break;
     }
   };
 
-  private postToMainThread(response: IPIApiWorkerResponse): void {
-    self.postMessage(response);
-  }
-
-  public sendError(requestId: string, error: IPIApiError): void {
-    const response: IPIApiWorkerResponse = {
-      error,
+  private postErrorReply = <T>(requestId: string, errorMessage: string, errorCode?: string): void => {
+    const response: WorkerReply<T> = {
       requestId,
-      type: PIApiWorkerResponseType.ERROR,
+      type: WorkerEventType.REPLY,
+      isError: true,
+      errorMessage,
+      errorCode,
     };
     this.postToMainThread(response);
   }
 
-  public sendNotification<T>(notificationType: PIApiWorkerResponseType, data: T): void {
+  private postSuccessReply = <T>(requestId: string, data: T): void => {
+    const response: WorkerReply<T> = {
+      requestId,
+      type: WorkerEventType.REPLY,
+      isError: false,
+      data,
+    };
+    this.postToMainThread(response);
+  }
+
+  private postToMainThread(response: WorkerEvent): void {
+    self.postMessage(response);
+  }
+
+  public sendNotification<T>(notificationType: WorkerEventType, data: T): void {
     const response = {
       data,
       type: notificationType,
     };
-    this.postToMainThread(response as IPIApiWorkerResponse);
+    this.postToMainThread(response as WorkerNotification<void>);
   }
 
-  public sendStateChange(state: IPIApiState): void {
-    const response: IPIApiWorkerResponse = {
+  public onMessageManagerStateChange(state: IPiApiState): void {
+    const response: WorkerStateChangedEvent = {
       state,
-      type: PIApiWorkerResponseType.STATE_CHANGED,
+      type: WorkerEventType.STATE_CHANGED,
     };
     this.postToMainThread(response);
-  }
-
-  public sendSuccess<T>(requestId: string, data: T): void {
-    const response: IPIApiWorkerResponse = {
-      data,
-      requestId,
-      type: PIApiWorkerResponseType.SUCCESS,
-    };
-    this.postToMainThread(response);
-  }
-
-  constructor() {
-    this.messageManager = new MessageManager(new Session(new Transport()));
-    self.addEventListener('message', this.handleMainThreadMessage);
-  }
-
-  private async handleConnect(command: IPIApiGenericCommand): Promise<void> {
-    try {
-      const config = (command.payload as any)?.config;
-      if (!config) {
-        throw new Error('Missing config in CONNECT command');
-      }
-      this.messageManager.connect(config);
-      this.sendSuccess(command.requestId, null);
-    } catch (error) {
-      this.sendError(command.requestId, {
-        code: 'CONNECTION_FAILED',
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  private async handleDisconnect(command: IPIApiGenericCommand): Promise<void> {
-    try {
-      this.messageManager.disconnect();
-      this.sendSuccess(command.requestId, null);
-    } catch (error) {
-      this.sendError(command.requestId, {
-        code: 'DISCONNECT_FAILED',
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
   }
 }
 

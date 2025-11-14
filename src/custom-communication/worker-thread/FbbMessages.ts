@@ -7,7 +7,6 @@ import { Message, ProcessInstanceMessage, ProcessInstanceMessageT, ReplyT, Reque
 import type { unionToMessage } from "../../generated/process-instance-message-api/message";
 import type { unionToRequestMessage } from "../../generated/process-instance-message-api/request-message";
 import * as flatbuffers from 'flatbuffers';
-import { makeUUID } from "../../utils/uuid";
 
 // 2. for each of those returns the unpacked type
 type IExtractUnionTypes<TFunc> = TFunc extends (
@@ -58,7 +57,7 @@ const wrapRequest = (req: IRequestUnionTypes, reqId: string, sessionId: string):
   const request = new RequestT();
   request.sessionId = sessionId;
   request.messageType = (RequestMessage as any)[getObjectClassName(req)];
-  request.requestId = reqId || makeUUID();
+  request.requestId = reqId;
   request.message = req;
   return request;
 };
@@ -142,3 +141,5 @@ export const tryUnwrapReplyOfType = <T>(
     sessionId: reply.sessionId!.toString(),
   };
 };
+
+
