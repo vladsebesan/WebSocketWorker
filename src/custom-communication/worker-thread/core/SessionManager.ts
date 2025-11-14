@@ -75,11 +75,13 @@ export class SessionManager {
     this.transportLayer.disconnect();
   };
 
-  public onMessageReceived: ((buffer: Uint8Array) => void) | null = null;
+  public onMessage: ((buffer: Uint8Array) => void) | null = null;
 
-  public onSessionConnected: (() => void) | null = null;
+  public onConnected: (() => void) | null = null;
 
-  public onSessionDisconnected: (() => void) | null = null;
+  public onDisconnected: (() => void) | null = null;
+
+  public onStateChanged: ((state: ISessionState) => void) | null = null;
 
   private startKeepaliveTimer = (): void => {
     if (!this.config || this.keepaliveTimer !== null) return;
@@ -179,8 +181,8 @@ export class SessionManager {
         this.stopKeepaliveTimer();
         
         // Notify that session is effectively disconnected due to keepalive failure
-        if (this.onSessionDisconnected) {
-          this.onSessionDisconnected();
+        if (this.onDisconnected) {
+          this.onDisconnected();
         }
         
         // Update state to indicate keepalive failure and prepare for reconnection
@@ -241,8 +243,8 @@ export class SessionManager {
         sessionState: SessionState.DISCONNECTED,
       });
       console.log('All reconnection attempts exhausted, session disconnected');
-      if (this.onSessionDisconnected) {
-        this.onSessionDisconnected();
+      if (this.onDisconnected) {
+        this.onDisconnected();
       }
     }
   };
@@ -269,7 +271,7 @@ export class SessionManager {
 
   onTlMessage = (buffer: Uint8Array): void => {
     if (this.handleSessionMessage(buffer)) return; //swallow session handling messages and
-    if (this.onMessageReceived) this.onMessageReceived(buffer); //forward other messages
+    if (this.onMessage) this.onMessage(buffer); //forward other messages
   };
 
   sendSessionCreate = (): void => {
@@ -311,8 +313,8 @@ export class SessionManager {
         // Start keepalive timer when session is connected
         this.startKeepaliveTimer();
         
-        if (this.onSessionConnected) {
-          this.onSessionConnected();
+        if (this.onConnected) {
+          this.onConnected();
         }
         
         return true;
@@ -345,7 +347,11 @@ export class SessionManager {
     if (hasChanged) {
       this.state = newState;
       console.log('SessionManager state updated:', this.state);
-      //notify further
+      
+      // Notify state change listeners
+      if (this.onStateChanged) {
+        this.onStateChanged({ ...this.state });
+      }
     }
   }
 }
