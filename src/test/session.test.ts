@@ -305,6 +305,18 @@ describe('Session Manager Tests', () => {
       
       vi.useRealTimers()
     })
+
+    it('should reject keepalive replies when no session exists', async () => {
+      // Try to send a keepalive reply without establishing a session first
+      mockTransport.simulateSessionKeepaliveReply('some-session-id')
+      
+      // Should NOT trigger any state changes since there's no active session
+      expect(onStateChangedSpy).not.toHaveBeenCalled()
+      
+      // State should remain in initial DISCONNECTED state
+      expect(currentState.sessionState).toBe(SessionState.DISCONNECTED)
+      expect(currentState.sessionId).toBeNull()
+    })
   })
 
   describe('Connection Resilience', () => {

@@ -1,6 +1,7 @@
 // MessageManager - Handles request/reply correlation and message parsing
-import type { MainThreadClient } from './MainThreadClient';
-import type { Transport } from './Transport';
+
+import { makeUUID } from '../../../utils/uuid';
+import type { ISessionConfig, ISession, ISessionState} from './Session';
 
 interface IPendingRequest {
   reject: (error: Error) => void;
@@ -8,15 +9,47 @@ interface IPendingRequest {
   timeout: NodeJS.Timeout;
 }
 
-export class MessageManager {
-  private nextRequestId = 1;
-  private pendingRequests = new Map<string, IPendingRequest>();
+export interface IMessageManagerConfig extends ISessionConfig {}
+export interface IMessageManagerState extends ISessionState {}
 
-  constructor(/*session: SessionManager*/) {
-    //private mainThreadClient: MainThreadClient, //private transportLayer: TransportLayer,
+export interface IMessageManager {
+  connect(config: ISessionConfig): void;
+  disconnect(): void;
+  send<T>(requestBuffer: Uint8Array): Promise<T>;
+  onConnected: (() => void) | null;
+  onDisconnected: (() => void) | null;
+  onStateChanged: ((state: IMessageManagerState) => void) | null;
+}
+export class MessageManager implements IMessageManager {
+  private pendingRequests = new Map<string, IPendingRequest>();
+  private session!: ISession;
+  public onConnected: (() => void) | null = null;
+  public onDisconnected: (() => void) | null = null;
+  public onStateChanged: ((state: IMessageManagerState) => void) | null = null;
+
+  constructor(session: ISession) {
+    this.session = session;    
   }
 
-  public cancelAllPendingRequests(): void {
+  public connect(config: ISessionConfig): void {
+    if (!this.session) {
+      throw new Error('Session is not initialized');
+    }
+    this.session.connect(config);
+    this.session.onMessage = this.onSessionMessage.bind(this);
+    this.session.onDisconnected = this.onSessionDisconnected.bind(this);
+    this.session.onConnected = this.onSessionConnected.bind(this);
+    this.session.onStateChanged = this.onSessionStateChanged.bind(this);
+  }
+
+  public disconnect(): void {
+    this.cancelAllPendingRequests();
+    if (this.session) {
+      this.session.disconnect();
+    }
+  }
+
+  private cancelAllPendingRequests(): void {
     for (const [requestId, pending] of this.pendingRequests) {
       clearTimeout(pending.timeout);
       pending.reject(new Error('Connection closed'));
@@ -24,18 +57,13 @@ export class MessageManager {
     this.pendingRequests.clear();
   }
 
-  public generateRequestId(): string {
-    return `req_${this.nextRequestId++}`;
-  }
+  public send<T>(requestBuffer: Uint8Array): Promise<T> {
 
-  public handleIncomingMessage(buffer: ArrayBuffer): void {
-    // TODO: Implement FlatBuffers message parsing
-    // For now, just log that we received a message
-    console.log('MessageManager: Received message of size:', buffer.byteLength);
-  }
+    if(!this.session) {
+      return Promise.reject(new Error('Session is not initialized'));
+    }
 
-  public async sendRequest<T>(requestBuffer: ArrayBuffer): Promise<T> {
-    const requestId = this.generateRequestId();
+    const requestId = makeUUID();
 
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -50,7 +78,32 @@ export class MessageManager {
       });
 
       // Send the request
-      //this.transportLayer.send(requestBuffer);
+      this.session!.send(requestBuffer);
     });
+  }
+
+  private onSessionMessage(buffer: Uint8Array): void {
+    // TODO: Implement FlatBuffers message parsing
+    // For now, just log that we received a message
+    console.log('MessageManager: Received message of size:', buffer.byteLength);
+  }
+
+  private onSessionDisconnected(): void {
+    this.cancelAllPendingRequests();
+    if (this.onDisconnected) {
+      this.onDisconnected();
+    }
+  }
+
+  private onSessionConnected(): void {
+    if (this.onConnected) {
+      this.onConnected();
+    }
+  }
+
+  private onSessionStateChanged(state: ISessionState): void {
+    if (this.onStateChanged) {
+      this.onStateChanged(state);
+    }
   }
 }

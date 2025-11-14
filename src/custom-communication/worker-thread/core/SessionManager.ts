@@ -1,4 +1,4 @@
-import type { ITransport } from './Transport';
+import type { ITransportLayer } from './TransportLayer';
 
 import { makeRequestMessageBuffer, tryUnwrapReplyOfType } from './FbbMessages';
 import { SessionCreateReplyT, SessionCreateT, SessionDestroyT, SessionKeepaliveReplyT, SessionKeepaliveT } from '../../../generated/process-instance-message-api';
@@ -27,17 +27,7 @@ export interface ISessionState {
   sessionState: SessionState;
 }
 
-export interface ISession {
-  connect: (config: ISessionConfig) => void;
-  disconnect: () => void;
-  onMessage: ((buffer: Uint8Array) => void) | null;
-  onConnected: (() => void) | null;
-  onDisconnected: (() => void) | null;
-  onStateChanged: ((state: ISessionState) => void) | null;
-  send: (buffer: Uint8Array) => void;
-}
-
-export class Session implements ISession {
+export class Session {
   private state: ISessionState = {
     reconnectAttemptsLeft: 0,
     sessionId: null,
@@ -55,9 +45,9 @@ export class Session implements ISession {
   private keepaliveFailureCount: number = 0;
   private lastKeepaliveSentTime: number = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
-  private transportLayer: ITransport;
+  private transportLayer: ITransportLayer;
 
-  constructor(transportLayer: ITransport) {
+  constructor(transportLayer: ITransportLayer) {
     this.transportLayer = transportLayer;
     this.transportLayer.onConnected = this.onTlConnected.bind(this);
     this.transportLayer.onDisconnected = this.onTlDisonnected.bind(this);
@@ -80,10 +70,6 @@ export class Session implements ISession {
   };
 
   public disconnect = (): void => {
-    // Only send session destroy if we have an active session
-    if (this.state.sessionId && this.state.sessionState === SessionState.CONNECTED) {
-      this.sendSessionDestroy();
-    }
     this.stopKeepaliveTimer();
     this.stopReconnectTimer();
     this.transportLayer.disconnect();
@@ -96,10 +82,6 @@ export class Session implements ISession {
   public onDisconnected: (() => void) | null = null;
 
   public onStateChanged: ((state: ISessionState) => void) | null = null;
-
-  public send = (buffer: Uint8Array): void => {
-    this.transportLayer.send(buffer);
-  }
 
   private startKeepaliveTimer = (): void => {
     if (!this.config || this.keepaliveTimer !== null) return;
@@ -290,51 +272,8 @@ export class Session implements ISession {
   };
 
   onTlMessage = (buffer: Uint8Array): void => {
-    // we've received a message, so communication is still alive
-    this.lastReceivedMessageTime = Date.now();
-
-    //if this is a SessionKeepaliveReply message handle it here
-    {
-      const res = tryUnwrapReplyOfType(buffer, SessionKeepaliveReplyT);
-      if (res?.payload instanceof SessionKeepaliveReplyT) {
-
-        // Validate that the keepalive reply sessionId matches our current session
-        if (res.sessionId !== this.state.sessionId) {
-          console.warn(`Received keepalive reply with mismatched sessionId. Expected: ${this.state.sessionId}, Received: ${res.sessionId}`);
-          return; //we still ingest the message but reject the keepalive reply
-        }
-        this.keepaliveFailureCount = 0; // Reset failure count on successful keepalive response
-        this.updateState({
-          reconnectAttemptsLeft: this.config.maxReconnectAttempts, // Reset to full attempts on successful keepalive
-          sessionId: res.sessionId,
-          sessionState: SessionState.CONNECTED,
-        });
-        console.log('Keepalive response received');
-        return;
-      }
-    }
-
-    //if this is a SessionCreateReply message handle it here
-    {
-      const res = tryUnwrapReplyOfType(buffer, SessionCreateReplyT);
-      if (res?.payload instanceof SessionCreateReplyT) {
-        this.keepaliveFailureCount = 0; // Reset failure count on successful session creation
-        this.stopReconnectTimer(); // Stop any pending reconnection attempts
-        this.updateState({
-          reconnectAttemptsLeft: this.config.maxReconnectAttempts, // Reset to full attempts on successful connection
-          sessionId: res.sessionId,
-          sessionState: SessionState.CONNECTED,
-        });
-        this.startKeepaliveTimer(); // Start keepalive timer when session is connected
-        if (this.onConnected) {
-          this.onConnected(); //Notify about successful connection
-        }
-        return;
-      }
-    }
-
-    // everything else is forwarded to onMessage handler
-    if (this.onMessage) this.onMessage(buffer);
+    if (this.handleSessionMessage(buffer)) return; //swallow session handling messages and
+    if (this.onMessage) this.onMessage(buffer); //forward other messages
   };
 
   sendSessionCreate = (): void => {
@@ -345,6 +284,8 @@ export class Session implements ISession {
   };
 
   sendSessionDestroy = (): void => {
+    if (!this.state.sessionId) return;
+    
     const reqId = makeUUID();
     const sessionDestroyReq = makeRequestMessageBuffer(new SessionDestroyT(), reqId, this.state.sessionId);
     this.transportLayer.send(sessionDestroyReq); // Placeholder for actual session destruction message
@@ -358,6 +299,59 @@ export class Session implements ISession {
     this.transportLayer.send(buff); // Placeholder for actual session keepalive message
     console.log('Keepalive message sent');
   };
+
+  handleSessionMessage(buffer: Uint8Array): boolean {
+    this.lastReceivedMessageTime = Date.now();
+    
+    {
+      const res = tryUnwrapReplyOfType(buffer, SessionCreateReplyT);
+      if (res?.payload instanceof SessionCreateReplyT) {
+        this.keepaliveFailureCount = 0; // Reset failure count on successful session creation
+        this.stopReconnectTimer(); // Stop any pending reconnection attempts
+        this.updateState({
+          reconnectAttemptsLeft: this.config.maxReconnectAttempts, // Reset to full attempts on successful connection
+          sessionId: res.sessionId,
+          sessionState: SessionState.CONNECTED,
+        });
+        
+        this.startKeepaliveTimer(); // Start keepalive timer when session is connected
+        
+        if (this.onConnected) {
+          this.onConnected();
+        }
+        
+        return true;
+      }
+    }
+
+    {
+      const res = tryUnwrapReplyOfType(buffer, SessionKeepaliveReplyT);
+      if (res?.payload instanceof SessionKeepaliveReplyT) {
+        // Only process keepalive replies if we have an active session
+        if (!this.state.sessionId) {
+          console.warn('Received keepalive reply but no active session exists. Ignoring.');
+          return false;
+        }
+
+        // Validate that the keepalive reply sessionId matches our current session
+        if (res.sessionId !== this.state.sessionId) {
+          console.warn(`Received keepalive reply with mismatched sessionId. Expected: ${this.state.sessionId}, Received: ${res.sessionId}`);
+          return false; // Reject the keepalive reply
+        }
+        
+        this.keepaliveFailureCount = 0; // Reset failure count on successful keepalive response
+        this.updateState({
+          reconnectAttemptsLeft: this.config.maxReconnectAttempts, // Reset to full attempts on successful keepalive
+          sessionId: res.sessionId,
+          sessionState: SessionState.CONNECTED,
+        });
+        console.log('Keepalive response received');
+        return true;
+      }
+    }
+
+    return false;
+  }
 
   updateState(newState: ISessionState) {
     const hasChanged =
