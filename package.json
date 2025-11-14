@@ -9,7 +9,10 @@
     "build:flatbuffers": "powershell -Command \"Get-ChildItem schemas/*.fbs | ForEach-Object { .\\tools\\flatc-23_5_26.exe --ts --gen-object-api --reflect-names --strict-json --schema --gen-mutable -o  src/generated $_.FullName }\"",
     "prebuild": "pnpm run build:flatbuffers",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:run": "vitest run"
   },
   "engines": {
     "node": "20.9.0"
@@ -23,16 +26,22 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
+    "@testing-library/jest-dom": "6.6.2",
+    "@testing-library/react": "16.0.1",
+    "@testing-library/user-event": "14.5.2",
     "@types/node": "^24.6.0",
     "@types/react": "^18.2.66",
-    "@types/react-dom": "^18.2.22",
+    "@types/react-dom": "^18.2.22",    
     "@vitejs/plugin-react": "^5.0.4",
     "eslint": "^9.36.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.22",
     "globals": "^16.4.0",
+    "jsdom": "25.0.1",
     "typescript": "5.1.3",
     "typescript-eslint": "^8.45.0",
-    "vite": "5.4.8"
+    "vite": "5.4.8",
+    "vitest": "2.1.1",
+    "@vitest/ui": "2.1.1"
   }
 }
