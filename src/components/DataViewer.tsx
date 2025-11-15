@@ -5,6 +5,7 @@ import { usePiApi } from "../custom-communication/PiApi";
 export const DataViewer = () : JSX.Element => {
   const piApi = usePiApi();
   const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toolbox, setToolbox] = useState<IToolboxModel | null>(null);
   const [flow, setFlow] = useState<IFlowModel | null>(null);
@@ -16,6 +17,7 @@ export const DataViewer = () : JSX.Element => {
     piApi.onConnected = async () => {
       console.log('DataViewer connected');
       setIsConnected(true);
+      setIsConnecting(false);
       setError(null);
 
       // Fetch data after connection
@@ -40,15 +42,16 @@ export const DataViewer = () : JSX.Element => {
       console.error('DataViewer connection failed:', err);
       setError(err.message);
       setIsConnected(false);
+      setIsConnecting(false);
     };
 
     piApi.onDisconnected = () => {
       console.log('DataViewer disconnected');
       setIsConnected(false);
+      setIsConnecting(false);
+      setToolbox(null);
+      setFlow(null);
     };
-
-    // Initiate connection
-    piApi.connect();
 
     // Cleanup
     return () => {
@@ -58,24 +61,58 @@ export const DataViewer = () : JSX.Element => {
     };
   }, [piApi]);
 
+  const handleConnect = () => {
+    if (!piApi || isConnecting) return;
+    setIsConnecting(true);
+    setError(null);
+    piApi.connect();
+  };
+
+  const handleDisconnect = () => {
+    if (!piApi) return;
+    piApi.disconnect();
+  };
+
   // Handle loading state while piApi is initializing
   if (!piApi) {
     return <div>Loading PIApi...</div>;
   }
 
-  if (error) {
-    return <div>Error: {error}</div>;
-  }
-
-  if (!isConnected) {
-    return <div>Connecting...</div>;
-  }
-
   return (
-    <div>
+    <div style={{ padding: '20px' }}>
       <h2>Data Viewer Component</h2>
-      {toolbox && <div>Toolbox loaded with {Object.keys(toolbox).length} items</div>}
-      {flow && <div>Flow loaded</div>}
+      
+      <div style={{ marginBottom: '20px' }}>
+        <button 
+          onClick={handleConnect} 
+          disabled={isConnected || isConnecting}
+          style={{ marginRight: '10px' }}
+        >
+          {isConnecting ? 'Connecting...' : 'Connect'}
+        </button>
+        <button 
+          onClick={handleDisconnect} 
+          disabled={!isConnected}
+        >
+          Disconnect
+        </button>
+        <span style={{ marginLeft: '10px' }}>
+          Status: {isConnected ? '🟢 Connected' : isConnecting ? '🟡 Connecting...' : '🔴 Disconnected'}
+        </span>
+      </div>
+
+      {error && (
+        <div style={{ color: 'red', marginBottom: '10px' }}>
+          Error: {error}
+        </div>
+      )}
+
+      {isConnected && (
+        <div>
+          {toolbox && <div>✅ Toolbox loaded with {Object.keys(toolbox).length} items</div>}
+          {flow && <div>✅ Flow loaded</div>}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import type { IPiApiConfig, IPiApiState } from '../PiApi';
 import { MessageManager } from './MessageManager';
-import { Session, SessionState } from './Session';
+import { Session } from './Session';
 import { Transport } from './Transport';
 import { Api } from '../ApiDefinition';
 
@@ -68,11 +68,7 @@ export type WorkerEvent =
 
 class PIApiWorker {
   private messageManager!: MessageManager;
-  
-  public onConnected: (() => void) | null = null;
-
-  public onDisconnected: (() => void) | null = null;
-
+  private pendingConnectionRequest: { requestId: string; type: WorkerCommandType.CONNECT | WorkerCommandType.DISCONNECT } | null = null;
 
   constructor() {
     this.messageManager = new MessageManager(new Session(new Transport()));
@@ -82,58 +78,20 @@ class PIApiWorker {
     self.addEventListener('message', this.recvFromMainThread);
   }
 
-  private resolvePromise(request: WorkerConnect | WorkerDisconnect) {
-
-    let transitionalStates: SessionState[] = [];
-    let expectedState: SessionState;
-    
-    if(request.type === WorkerCommandType.CONNECT) {
-      transitionalStates.push(SessionState.CONNECTING, SessionState.SESSION_INIT);
-      expectedState = SessionState.CONNECTED;
-    }
-    else {
-      expectedState = SessionState.DISCONNECTED;
-    }
-
-    // TODO: AI: Store original callback to ensure it's always restored
-    // const originalCallback = this.messageManager.onStateChanged;
-    
-    this.messageManager.onStateChanged = (state) => {
-      //1. Notify main thread of all state changes
-      this.onMessageManagerStateChange(state); 
-
-      //2. Handle connection promise resolution (ignoring transitional states)
-      if(transitionalStates.includes(state.sessionState)) {
-        return;  // Still in transitional state, do nothing
-      }
-      //3. No more in expected transitional states, now we should be either in the expected state or a failure state
-      if(state.sessionState === expectedState) {
-        this.postSuccessReply(request.requestId, undefined);
-      }
-      else {
-        const errorMessage = `Failed to ${request.type === WorkerCommandType.CONNECT ? 'connect' : 'disconnect'}. Current state: ${SessionState[state.sessionState]}`;
-        const errorCode = 'COMM_ERROR';
-        this.postErrorReply(request.requestId, errorMessage, errorCode);
-      }
-      //4. Restore normal state change handling (always restore after handling final state)
-      this.messageManager.onStateChanged = this.onMessageManagerStateChange.bind(this);
-    }
-  }
-
   private recvFromMainThread = (event: MessageEvent): void => {
     const command = event.data as WorkerCommand;
     switch (command.type) {
       case WorkerCommandType.CONNECT:
         {
           const connect = command as WorkerConnect;
-          this.resolvePromise(connect); //hijack session state notifications until connected
+          this.pendingConnectionRequest = { requestId: connect.requestId, type: WorkerCommandType.CONNECT };
           this.messageManager.connect(connect.config);
         }
         break;
       case WorkerCommandType.DISCONNECT:
         {
           const disconnect = command as WorkerDisconnect;
-          this.resolvePromise(disconnect); //hijack session state notifications until connected
+          this.pendingConnectionRequest = { requestId: disconnect.requestId, type: WorkerCommandType.DISCONNECT };
           this.messageManager.disconnect();
         }
         break;
@@ -206,18 +164,30 @@ class PIApiWorker {
   }
 
   public onMessageManagerConnected(): void {
-    //TODO AI: Remove console.log from production code
-    console.log('PIApiWorker: MessageManager connected');
-    if(this.onConnected) {
-      this.onConnected();
+    console.log('PIApiWorker: MessageManager connected'); //TODO AI: Remove console.log from production code
+    
+    if (this.pendingConnectionRequest?.type === WorkerCommandType.CONNECT) {
+      this.postSuccessReply(this.pendingConnectionRequest.requestId, undefined);
+      this.pendingConnectionRequest = null;
     }
   }
 
   public onMessageManagerDisconnected(): void {
-    //TODO AI: Remove console.log from production code
-    console.log('PIApiWorker: MessageManager disconnected');
-    if(this.onDisconnected) {
-      this.onDisconnected();
+    console.log('PIApiWorker: MessageManager disconnected'); //TODO AI: Remove console.log from production code
+    
+    if (this.pendingConnectionRequest) {
+      if (this.pendingConnectionRequest.type === WorkerCommandType.DISCONNECT) {
+        // Expected disconnection - resolve the disconnect request
+        this.postSuccessReply(this.pendingConnectionRequest.requestId, undefined);
+      } else {
+        // Unexpected disconnection during connect - reject the connect request
+        this.postErrorReply(
+          this.pendingConnectionRequest.requestId,
+          'Connection failed - disconnected before establishing connection',
+          'CONNECT_FAILED'
+        );
+      }
+      this.pendingConnectionRequest = null;
     }
   }
 }
