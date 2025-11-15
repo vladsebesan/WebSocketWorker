@@ -109,10 +109,15 @@ export class Session implements ISession {
   private startKeepaliveTimer = (): void => {
     if (!this.config || this.keepaliveTimer !== null) return;
 
+    // TODO: AI: PERFORMANCE ISSUE - Using setInterval for keepalive runs continuously even when messages are 
+    // actively flowing. This is wasteful - should use setTimeout and reschedule only when needed based on 
+    // actual message activity. Current implementation checks conditions inside the interval callback, but the 
+    // interval itself runs forever.
     this.keepaliveTimer = setInterval(() => {
       this.performKeepalive();
     }, this.config.sessionKeepaliveIntervalMs);
 
+    // TODO: AI: Remove console.log from production code
     console.log(`Keepalive timer started with ${this.config.sessionKeepaliveIntervalMs}ms interval`);
   };
 
@@ -121,6 +126,7 @@ export class Session implements ISession {
       clearInterval(this.keepaliveTimer);
       this.keepaliveTimer = null;
       this.keepaliveFailureCount = 0;
+      // TODO: AI: Remove console.log from production code
       console.log('Keepalive timer stopped');
     }
   };
@@ -130,8 +136,11 @@ export class Session implements ISession {
       return;
     }
 
+    // TODO: AI: Remove console.log from production code
     console.log(`Starting reconnect timer. Attempts left: ${this.state.reconnectAttemptsLeft}`);
     
+    // TODO: AI: MISSING BACKOFF STRATEGY - Fixed 1-second retry interval regardless of failure count.
+    // Should implement exponential backoff (1s, 2s, 4s, 8s...) to reduce server load during prolonged outages.
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.attemptReconnect();
@@ -142,16 +151,19 @@ export class Session implements ISession {
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+      // TODO: AI: Remove console.log from production code
       console.log('Reconnect timer stopped');
     }
   };
 
   private attemptReconnect = (): void => {
     if (this.state.reconnectAttemptsLeft <= 0) {
+      // TODO: AI: Remove console.log from production code
       console.log('No more reconnect attempts left');
       return;
     }
 
+    // TODO: AI: Remove console.log from production code
     console.log(`Attempting reconnect. Attempts left: ${this.state.reconnectAttemptsLeft}`);
     
     this.updateState({
@@ -165,10 +177,12 @@ export class Session implements ISession {
 
   private triggerReconnectionFromKeepaliveFailure = (): void => {
     if (this.state.sessionState !== SessionState.SESSION_KEEPALIVE_FAILED || this.state.reconnectAttemptsLeft <= 0) {
+      // TODO: AI: Remove console.log from production code
       console.log('Cannot trigger reconnection - invalid state or no attempts left');
       return;
     }
 
+    // TODO: AI: Remove console.log from production code
     console.log('Triggering immediate reconnection from keepalive failure');
     
     // Set state to CONNECTING and start reconnection
@@ -202,6 +216,7 @@ export class Session implements ISession {
       // Check for keepalive timeout
       const maxFailures = this.config!.maxKeepaliveFailures ?? 3;
       if (this.keepaliveFailureCount >= maxFailures) {
+        // TODO: AI: Remove console.error from production code - use proper error reporting
         console.error(`Keepalive failed ${this.keepaliveFailureCount} times, triggering reconnection`);
         this.stopKeepaliveTimer();
         

@@ -31,6 +31,7 @@ export interface WorkerSendRequest {
   requestId: string;  
   type: WorkerCommandType.SEND_REQUEST;
   commandType: string;
+  // TODO: AI: Type safety issue - using 'any' for params. Should use generic type or unknown with proper validation
   params: any;
   timeoutMs: number;
 }
@@ -71,9 +72,17 @@ class PIApiWorker {
   constructor() {
     this.messageManager = new MessageManager(new Session(new Transport()));
     this.messageManager.onStateChanged = this.onMessageManagerStateChange.bind(this);
+    this.messageManager.onConnected = this.onMessageManagerConnected.bind(this);
+    this.messageManager.onDisconnected = this.onMessageManagerDisconnected.bind(this);
     self.addEventListener('message', this.recvFromMainThread);
   }
 
+  // TODO: AI: CRITICAL MEMORY LEAK - This method creates a closure that hijacks onStateChanged but never properly 
+  // restores it in all code paths. If the state never reaches expectedState (e.g., network errors, unexpected states),
+  // the callback remains hijacked forever, preventing GC of the closure and all its captured variables (request, 
+  // transitionalStates, expectedState). This causes memory to leak on every failed connection attempt.
+  // FIX: Store the original callback before hijacking, and ALWAYS restore it in a finally block or timeout.
+  // Consider using a state machine pattern or Promise with timeout instead of callback hijacking.
   private resolvePromise(request: WorkerConnect | WorkerDisconnect) {
 
     let transitionalStates: SessionState[] = [];
@@ -87,6 +96,9 @@ class PIApiWorker {
       expectedState = SessionState.DISCONNECTED;
     }
 
+    // TODO: AI: Store original callback to ensure it's always restored
+    // const originalCallback = this.messageManager.onStateChanged;
+    
     this.messageManager.onStateChanged = (state) => {
       //1. Notify main thread of all state changes
       this.onMessageManagerStateChange(state); 
@@ -106,6 +118,8 @@ class PIApiWorker {
         this.postErrorReply(request.requestId, errorMessage, errorCode);
       }
       //4. Restore normal state change handling
+      // TODO: AI: This restoration only happens in ONE path. What if state transitions to ERROR, KEEPALIVE_FAILED, 
+      // or other unexpected states? The callback never gets restored and the closure leaks.
       this.messageManager.onStateChanged = this.onMessageManagerStateChange.bind(this);
     }
   }
@@ -142,6 +156,8 @@ class PIApiWorker {
         }
         break;
       default:
+        // TODO: AI: Production code should not use console.warn - implement proper logging utility with 
+        // conditional logging based on environment (strip logs in production build)
         console.warn(`PiApiWorker: Unknown command type received: ${(command as any).type}`);
         break;
     }
@@ -166,6 +182,8 @@ class PIApiWorker {
       data,
     };
 
+    // TODO: AI: Remove console.log from production code - causes performance degradation and potential memory 
+    // leaks when dev tools are open. Use conditional logging or remove entirely.
     console.log('Posting success reply:', response);
 
     this.postToMainThread(response);
@@ -190,10 +208,22 @@ class PIApiWorker {
     };
     this.postToMainThread(response);
   }
+
+  public onMessageManagerConnected(): void {
+    // TODO: AI: Remove console.log from production code
+    console.log('PIApiWorker: MessageManager connected');
+  }
+
+  public onMessageManagerDisconnected(): void {
+    // TODO: AI: Remove console.log from production code
+    console.log('PIApiWorker: MessageManager disconnected');
+  }
 }
 
 // Auto-initialize when running in Web Worker context (like your current code)
 if (typeof self !== 'undefined' && typeof window === 'undefined') {
   const piApiWorker = new PIApiWorker();
+  // TODO: AI: Type safety issue - avoid using 'as any' and polluting global scope. This is acceptable for 
+  // debugging but should be removed or properly typed in production.
   (self as any).__piApiWorker = piApiWorker; // Export for debugging (similar to your current __websocketWorker export)
 }

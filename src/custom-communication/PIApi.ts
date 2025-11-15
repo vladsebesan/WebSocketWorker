@@ -19,9 +19,12 @@ export interface IPiApiState extends IMessageManagerState {}
 //   unsubscribeCommandType: WorkerCommandType;
 // }
 
+// TODO: AI: CRITICAL - Missing timeout property. These promises can hang forever if worker crashes or never 
+// responds, causing unbounded memory growth from orphaned promises and their closures.
 interface IPendingRequest {
   reject: (error: Error) => void;
   resolve: (data: any) => void;
+  // Add: timeout: NodeJS.Timeout;
 }
 
 const WORKER_URL = new URL('./worker-thread/PIApiWorker.ts', import.meta.url);
@@ -41,6 +44,7 @@ export class PiApi {
       sessionId: null,
       sessionState: SessionState.DISCONNECTED,
     };
+    // TODO: AI: Remove console.log from production code
     console.log('PiApi initialized with state:', this.state);
     try {
       this.worker = new Worker(WORKER_URL, { type: 'module' });
@@ -76,16 +80,24 @@ export class PiApi {
     }
   }
 
+  // TODO: AI: Hardcoded timeout (10000ms). Should be configurable via config or environment variable for 
+  // different deployment scenarios (dev/staging/prod may need different timeouts).
   public async getToolbox(): Promise<IToolboxModel> {
     const command = Api.ToolboxGet({});
     return this.sendRequest(command, 10000);
   }
 
+  // TODO: AI: Hardcoded timeout (10000ms). Should be configurable.
   public async getFlow(): Promise<IFlowModel> {
     const command = Api.FlowGet({});
     return this.sendRequest(command, 10000);
   }
 
+  // TODO: AI: CRITICAL ISSUE - No client-side timeout mechanism. This relies entirely on the worker to timeout.
+  // If the worker crashes, freezes, or never responds, these promises will never resolve/reject, causing memory leaks.
+  // Should implement a timeout here as a safety mechanism (similar to MessageManager.sendRequest).
+  // Also missing: request deduplication (rapid clicks send duplicate requests), request cancellation (cannot abort 
+  // long-running requests when user navigates away).
   private async sendRequest<TParams, TResult>(
     command: IApiCommand<TParams, TResult>,
     timeoutMs: number = 5000
@@ -94,6 +106,12 @@ export class PiApi {
     
     return new Promise<TResult>((resolve, reject) => {
       // Store pending request - timeout handled by worker
+      // TODO: AI: Add client-side timeout as safety net:
+      // const timeout = setTimeout(() => {
+      //   this.pendingRequests.delete(requestId);
+      //   reject(new Error(`Request ${command.commandType} timed out after ${timeoutMs}ms`));
+      // }, timeoutMs);
+      
       this.pendingRequests.set(requestId, {
         resolve: (data: TResult) => {
           resolve(data);
@@ -101,6 +119,7 @@ export class PiApi {
         reject: (error: Error) => {
           reject(error);
         }
+        // timeout (add this field)
       });
 
       // Send command to worker - the command object contains everything needed
@@ -113,6 +132,7 @@ export class PiApi {
 
       if (this.worker) {
         this.worker.postMessage(workerCommand);
+        // TODO: AI: Remove console.log from production code
         console.log(`PIApi: Sent API command ${command.commandType} with requestId: ${requestId}`);
       } else {
         this.pendingRequests.delete(requestId);
@@ -137,12 +157,15 @@ export class PiApi {
         break;
       case WorkerEventType.REPLY:
         if (!response.requestId) {
+          // TODO: AI: console.error should be replaced with proper error reporting/logging utility
           console.error('PIApi: Received reply with no requestId');
           return;
         }
         const pending = this.pendingRequests.get(response.requestId);
         if (pending) {
           this.pendingRequests.delete(response.requestId);
+          // TODO: AI: If we add timeout (as recommended), remember to clear it here:
+          // clearTimeout(pending.timeout);
           if (response.type === WorkerEventType.REPLY) {
             if(response.isError) {
               pending.reject(new Error(response.errorMessage || 'Unknown error'));
@@ -166,6 +189,7 @@ export class PiApi {
         // }
         break;
       default:
+        // TODO: AI: Remove console.log from production code
         console.log('PIApi: Unsupported worker event:', (response as any).type);
         break;
     }  
@@ -198,24 +222,6 @@ export class PiApi {
       this.worker!.postMessage(command);
     });
   }
-
-  // private onStateChange(callback: IPIApiNotificationCallback<IPIApiState>): IPIApiSubscription {
-  //   // this.stateChangeCallbacks.add(callback);
-  //   // return {
-  //   //   unsubscribe: (): void => {
-  //   //     this.stateChangeCallbacks.delete(callback);
-  //   //   },
-  //   // };
-  // }
-
-  // private async sendCommand<T = unknown>(commandType: WorkerCommandType, payload?: unknown): Promise<T> {
-  //   const command: IPIApiGenericCommand = {
-  //     payload,
-  //     requestId: makeUUID(),
-  //     type: commandType,
-  //   };
-  //   return this.sendCommandInternal(command);
-  // }
 
   // public subscribeToNotifications<T>(
   //   subscribeCommandType: WorkerCommandType,
@@ -258,9 +264,15 @@ export class PiApi {
   //       }
   //     },
   //   };
-  // }
+  // };
 }
 
+// TODO: AI: CRITICAL - Multiple issues with this hook:
+// 1. Returns null! (non-null assertion on nullable value) - causes crashes when components try to use piApi before initialization
+// 2. Race condition - component receives null, renders, then re-renders with real value (unnecessary render)
+// 3. No loading state management - components must handle null case themselves
+// 4. Cleanup effect depends on piApi, but it's set asynchronously - potential timing issues
+// FIX: Return an object with {piApi, isLoading} or use Suspense pattern. Never return null with ! assertion.
 export const usePiApi = (): PiApi => {
   const [piApi, setPiApi] = useState<PiApi | null>(null);
   const isInitialized = useRef(false);
@@ -281,6 +293,7 @@ export const usePiApi = (): PiApi => {
     if (!isInitialized.current) {
       isInitialized.current = true;
       
+      // TODO: AI: Configuration values should come from environment variables or config file, not hardcoded
       const fullConfig: IPiApiConfig = {
         maxReconnectAttempts: 3,
         reconnectIntervalMs: 1000,
@@ -306,11 +319,15 @@ export const usePiApi = (): PiApi => {
   useEffect(() => {
     return () => {
       if (piApi) {
+        // TODO: AI: Remove console.log from production code
         console.log('Disposing PIApi on unmount');
         piApi.dispose();
       }
     };
   }, [piApi]);
 
+  // TODO: AI: CRITICAL - This returns null! which forces a non-null assertion on a nullable value.
+  // Components calling this hook will crash if they try to use piApi before it's initialized.
+  // Should return { piApi: PiApi | null, isLoading: boolean } or throw in Suspense.
   return piApi!;
 };

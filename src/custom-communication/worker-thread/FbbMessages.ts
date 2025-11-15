@@ -74,6 +74,8 @@ export const makeRequestMessageBuffer = (
   reqId: string,
   sessionId: string,
 ): Uint8Array => {
+  // TODO: AI: If pack() or finish() throw, the shared builder is left in corrupted state
+  // Consider wrapping in try/catch and recreating builder on error
   const piMessage = wrapAsPiMessage(wrapRequest(req, reqId, sessionId));
   const builder = getBuilder();
   const piMessageOffset = piMessage.pack(builder);
@@ -92,6 +94,7 @@ export const tryUnwrapPiMessageBuffer = (buffer: Uint8Array | null): null | Proc
     }
     return piMessage.unpack();
   } catch (error) {
+    // TODO: AI: Remove console.error from production code - implement proper error reporting
     console.error('Failed to unwrap message buffer:', error);
   }
   return null;
@@ -100,10 +103,12 @@ export const tryUnwrapPiMessageBuffer = (buffer: Uint8Array | null): null | Proc
 export const tryUnwrapReply = (message: ProcessInstanceMessageT | null): null | ReplyT => {
   
   if (!!!message) {
+    // TODO: AI: Remove console.log from production code
     console.log("wrong PI message format - can't unwrap");
     return null;
   }
   if (!!!message.message) {
+    // TODO: AI: Remove console.log from production code
     console.log('PI message has no content');
     return null;
   }
@@ -117,6 +122,7 @@ export const tryUnwrapReply = (message: ProcessInstanceMessageT | null): null | 
     piReply.messageType === null ||
     piReply.message === null
   ) {
+    // TODO: AI: Remove console.log from production code
     console.log('PI reply is missing required fields');
     return null;
   }

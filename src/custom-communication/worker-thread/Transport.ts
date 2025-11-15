@@ -22,6 +22,7 @@ export class Transport implements ITransport {
   public onMessage: ((buffer: Uint8Array) => void) | null = null;
 
   private onWsClosed(): void {
+    // TODO: AI: Remove console.log from production code
     console.log('TransportLayer connection closed');
     this.websocket = null;
     if (this.onDisconnected) {
@@ -30,7 +31,9 @@ export class Transport implements ITransport {
   }
 
   private onWsError(event: Event): void {
+    // TODO: AI: Type safety - avoid using 'as any'
     const errorMessage = `WebSocket error: ${(event as any)?.type || 'unknown'}`;
+    // TODO: AI: Remove console.log from production code
     console.log(`TransportLayer connection error: ${errorMessage}`);
     if (this.onError) {
       this.onError(new Error(errorMessage));
@@ -49,6 +52,10 @@ export class Transport implements ITransport {
     }
   }
 
+  // TODO: AI: PERFORMANCE ISSUE - Creates new bound functions on every connect() call instead of reusing them.
+  // This causes minor GC pressure on reconnection. Consider binding once in constructor and storing references.
+  // Current: .bind(this) creates new function on each reconnect
+  // Better: Store bound functions as class properties
   public connect(url: string): void {
     if (this.websocket) {
       this.disconnect();
