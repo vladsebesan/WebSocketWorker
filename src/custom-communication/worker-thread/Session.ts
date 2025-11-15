@@ -139,8 +139,6 @@ export class Session implements ISession {
     // TODO: AI: Remove console.log from production code
     console.log(`Starting reconnect timer. Attempts left: ${this.state.reconnectAttemptsLeft}`);
     
-    // TODO: AI: MISSING BACKOFF STRATEGY - Fixed 1-second retry interval regardless of failure count.
-    // Should implement exponential backoff (1s, 2s, 4s, 8s...) to reduce server load during prolonged outages.
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.attemptReconnect();

@@ -69,6 +69,11 @@ export type WorkerEvent =
 class PIApiWorker {
   private messageManager!: MessageManager;
   
+  public onConnected: (() => void) | null = null;
+
+  public onDisconnected: (() => void) | null = null;
+
+
   constructor() {
     this.messageManager = new MessageManager(new Session(new Transport()));
     this.messageManager.onStateChanged = this.onMessageManagerStateChange.bind(this);
@@ -210,13 +215,19 @@ class PIApiWorker {
   }
 
   public onMessageManagerConnected(): void {
-    // TODO: AI: Remove console.log from production code
+    //TODO AI: Remove console.log from production code
     console.log('PIApiWorker: MessageManager connected');
+    if(this.onConnected) {
+      this.onConnected();
+    }
   }
 
   public onMessageManagerDisconnected(): void {
-    // TODO: AI: Remove console.log from production code
+    //TODO AI: Remove console.log from production code
     console.log('PIApiWorker: MessageManager disconnected');
+    if(this.onDisconnected) {
+      this.onDisconnected();
+    }
   }
 }
 
