@@ -20,6 +20,7 @@ export interface IMessageManager {
   onConnected: (() => void) | null;
   onDisconnected: (() => void) | null;
   onStateChanged: ((state: IMessageManagerState) => void) | null;
+  onNotification: ((notification: NotificationT) => void) | null;
 }
 
 export class MessageManager implements IMessageManager {
@@ -28,6 +29,7 @@ export class MessageManager implements IMessageManager {
   public onConnected: (() => void) | null = null;
   public onDisconnected: (() => void) | null = null;
   public onStateChanged: ((state: IMessageManagerState) => void) | null = null;
+  public onNotification: ((notification: NotificationT) => void) | null = null;
 
   constructor(session: ISession) {
     this.session = session;    
@@ -109,12 +111,14 @@ export class MessageManager implements IMessageManager {
       }
     }
     else if(message instanceof NotificationT) {
-      //console.log('MessageManager: Received notification:', message);
-
+      // Forward notification to PIApiWorker via callback
       console.log(`MessageManager: Received notification of type: ${NotificationMessage[message.messageType]} with sessionId:`, message.sessionId);
-      // new NotificationT();
-      // new FlowNotifyT()
-
+      
+      if (this.onNotification) {
+        this.onNotification(message);
+      } else {
+        console.warn('MessageManager: Received notification but no onNotification handler is registered');
+      }
     } else {
       console.log('MessageManager: Received unsupported message of type:', message);
     }

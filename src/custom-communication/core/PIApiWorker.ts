@@ -47,6 +47,7 @@ export interface WorkerReply<T> {
 
 export interface WorkerNotification<T> {
   data: T;
+  subscriptionId: string;
   type: WorkerEventType.NOTIFICATION;
 }
 
@@ -75,6 +76,7 @@ class PIApiWorker {
     this.messageManager.onStateChanged = this.onMessageManagerStateChange.bind(this);
     this.messageManager.onConnected = this.onMessageManagerConnected.bind(this);
     this.messageManager.onDisconnected = this.onMessageManagerDisconnected.bind(this);
+    this.messageManager.onNotification = this.onNotification.bind(this);
     self.addEventListener('message', this.recvFromMainThread);
   }
 
@@ -147,12 +149,16 @@ class PIApiWorker {
     self.postMessage(response);
   }
 
-  public sendNotification<T>(notificationType: WorkerEventType, data: T): void {
-    const response = {
-      data,
-      type: notificationType,
+  private onNotification(notification: any): void {
+    console.log('PIApiWorker: Received notification from MessageManager');
+    
+    // Forward notification to main thread
+    const response: WorkerNotification<any> = {
+      data: notification,
+      subscriptionId: '', // Will be extracted in PiApi from notification data
+      type: WorkerEventType.NOTIFICATION,
     };
-    this.postToMainThread(response as WorkerNotification<void>);
+    this.postToMainThread(response);
   }
 
   public onMessageManagerStateChange(state: IPiApiState): void {
