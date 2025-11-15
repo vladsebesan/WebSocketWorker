@@ -37,6 +37,11 @@ export class PiApi {
   //private stateChangeCallbacks = new Set<IPIApiNotificationCallback<IPiApiState>>();
   //private subscriptions = new Map<string, IActiveSubscription>();
 
+  onConnected: (() => void) | null = null;
+  onDisconnected: (() => void) | null = null;
+  onConnectionError: ((error: Error) => void) | null = null;
+
+
   constructor(config: IPiApiConfig) {
     this.config = config;
     this.state = {
@@ -56,17 +61,27 @@ export class PiApi {
     }
   }
 
-  public async connect(): Promise<void> {
-    return this.sendCommandInternal({
+  private sendWorkerCommand(command: WorkerCommand): void {
+    this.pendingRequests.set(command.requestId, {
+      resolve: () => {},
+      reject: () => {}
+    });
+    if (this.worker) {
+      this.worker.postMessage(command);
+    }
+  }
+
+  public connect(): void {
+    this.sendWorkerCommand({
       config: this.config,
       requestId: makeUUID(),
       type: WorkerCommandType.CONNECT,
     });
   }
 
-  public async disconnect(): Promise<void> {
-    await this.sendCommandInternal({
-      requestId:  makeUUID(),
+  public disconnect(): void {
+    this.sendWorkerCommand({
+      requestId: makeUUID(),
       type: WorkerCommandType.DISCONNECT,
     });
     this.cleanup();
@@ -168,9 +183,17 @@ export class PiApi {
           // clearTimeout(pending.timeout);
           if (response.type === WorkerEventType.REPLY) {
             if(response.isError) {
+              // Check if this is a connect/disconnect error
+              if (this.onConnectionError) {
+                this.onConnectionError(new Error(response.errorMessage || 'Unknown error'));
+              }
               pending.reject(new Error(response.errorMessage || 'Unknown error'));
               return;
             }else{
+              // Check if this is a connect/disconnect success
+              if (this.onConnected && (response as any).data === undefined) {
+                this.onConnected();
+              }
               pending.resolve((response as any).data);
               return;
             }
@@ -207,21 +230,7 @@ export class PiApi {
     //this.stateChangeCallbacks.clear();
   }
 
-  private async sendCommandInternal<T = unknown>(command: WorkerCommand): Promise<T> {
-    if (!this.worker) {
-      throw new Error('Worker not initialized');
-    }
 
-    return new Promise<T>((resolve, reject) => {
-      // Store pending request - timeout handled by worker
-      this.pendingRequests.set(command.requestId, {
-        reject,
-        resolve
-      });
-
-      this.worker!.postMessage(command);
-    });
-  }
 
   // public subscribeToNotifications<T>(
   //   subscribeCommandType: WorkerCommandType,

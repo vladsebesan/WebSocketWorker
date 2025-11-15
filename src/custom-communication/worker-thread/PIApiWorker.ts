@@ -82,12 +82,6 @@ class PIApiWorker {
     self.addEventListener('message', this.recvFromMainThread);
   }
 
-  // TODO: AI: CRITICAL MEMORY LEAK - This method creates a closure that hijacks onStateChanged but never properly 
-  // restores it in all code paths. If the state never reaches expectedState (e.g., network errors, unexpected states),
-  // the callback remains hijacked forever, preventing GC of the closure and all its captured variables (request, 
-  // transitionalStates, expectedState). This causes memory to leak on every failed connection attempt.
-  // FIX: Store the original callback before hijacking, and ALWAYS restore it in a finally block or timeout.
-  // Consider using a state machine pattern or Promise with timeout instead of callback hijacking.
   private resolvePromise(request: WorkerConnect | WorkerDisconnect) {
 
     let transitionalStates: SessionState[] = [];
@@ -113,7 +107,6 @@ class PIApiWorker {
         return;  // Still in transitional state, do nothing
       }
       //3. No more in expected transitional states, now we should be either in the expected state or a failure state
-      //or there is a failure
       if(state.sessionState === expectedState) {
         this.postSuccessReply(request.requestId, undefined);
       }
@@ -122,9 +115,7 @@ class PIApiWorker {
         const errorCode = 'COMM_ERROR';
         this.postErrorReply(request.requestId, errorMessage, errorCode);
       }
-      //4. Restore normal state change handling
-      // TODO: AI: This restoration only happens in ONE path. What if state transitions to ERROR, KEEPALIVE_FAILED, 
-      // or other unexpected states? The callback never gets restored and the closure leaks.
+      //4. Restore normal state change handling (always restore after handling final state)
       this.messageManager.onStateChanged = this.onMessageManagerStateChange.bind(this);
     }
   }
