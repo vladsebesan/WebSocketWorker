@@ -41,7 +41,6 @@ export class PiApi {
   onDisconnected: (() => void) | null = null;
   onConnectionError: ((error: Error) => void) | null = null;
 
-
   constructor(config: IPiApiConfig) {
     this.config = config;
     this.state = {
@@ -74,17 +73,16 @@ export class PiApi {
   public connect(): void {
     this.sendWorkerCommand({
       config: this.config,
-      requestId: makeUUID(),
+      requestId: 'connect_req_id',
       type: WorkerCommandType.CONNECT,
     });
   }
 
   public disconnect(): void {
     this.sendWorkerCommand({
-      requestId: makeUUID(),
+      requestId: 'disconnect_req_id',
       type: WorkerCommandType.DISCONNECT,
     });
-    this.cleanup();
   }
 
   public dispose(): void {
@@ -183,17 +181,30 @@ export class PiApi {
           // clearTimeout(pending.timeout);
           if (response.type === WorkerEventType.REPLY) {
             if(response.isError) {
-              // Check if this is a connect/disconnect error
-              if (this.onConnectionError) {
-                this.onConnectionError(new Error(response.errorMessage || 'Unknown error'));
+
+              if(response.requestId === 'connect_req_id'){
+                //notify connection error
+                if(this.onConnectionError) {
+                  this.onConnectionError(new Error(response.errorMessage || 'Unknown error'));
+                }
               }
               pending.reject(new Error(response.errorMessage || 'Unknown error'));
               return;
             }else{
-              // Check if this is a connect/disconnect success
-              if (this.onConnected && (response as any).data === undefined) {
-                this.onConnected();
+
+              if(response.requestId === 'connect_req_id'){
+                if(this.onConnected) {
+                  this.onConnected();
+                }
               }
+
+              if(response.requestId === 'disconnect_req_id'){
+                this.cleanup();
+                if(this.onDisconnected) {
+                  this.onDisconnected();
+                }                
+              }
+
               pending.resolve((response as any).data);
               return;
             }

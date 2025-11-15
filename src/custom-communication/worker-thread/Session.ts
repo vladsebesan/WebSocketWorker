@@ -66,6 +66,11 @@ export class Session implements ISession {
     this.transportLayer.onMessage = this.onTlMessage.bind(this);
   }
 
+  public onMessage: ((message: ProcessInstanceMessageT) => void) | null = null;
+  public onConnected: (() => void) | null = null;
+  public onDisconnected: (() => void) | null = null;
+  public onStateChanged: ((state: ISessionState) => void) | null = null;
+
   public connect = (config: ISessionConfig): void => {
     this.config = {
       ...this.config,  // Use existing defaults
@@ -88,15 +93,10 @@ export class Session implements ISession {
     this.stopKeepaliveTimer();
     this.stopReconnectTimer();
     this.transportLayer.disconnect();
+    if (this.onDisconnected) {
+      this.onDisconnected();
+    }
   };
-
-  public onMessage: ((message: ProcessInstanceMessageT) => void) | null = null;
-
-  public onConnected: (() => void) | null = null;
-
-  public onDisconnected: (() => void) | null = null;
-
-  public onStateChanged: ((state: ISessionState) => void) | null = null;
 
   public send = (buffer: Uint8Array): void => {
     this.transportLayer.send(buffer);

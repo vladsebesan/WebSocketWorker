@@ -5,7 +5,6 @@ import { usePiApi } from "../custom-communication/PiApi";
 export const DataViewer = () : JSX.Element => {
   const piApi = usePiApi();
   const [isConnected, setIsConnected] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toolbox, setToolbox] = useState<IToolboxModel | null>(null);
   const [flow, setFlow] = useState<IFlowModel | null>(null);
@@ -15,9 +14,7 @@ export const DataViewer = () : JSX.Element => {
 
     // Setup connection callbacks
     piApi.onConnected = async () => {
-      console.log('DataViewer connected');
       setIsConnected(true);
-      setIsConnecting(false);
       setError(null);
 
       // Fetch data after connection
@@ -29,26 +26,19 @@ export const DataViewer = () : JSX.Element => {
         
         setToolbox(toolboxData);
         setFlow(flowData);
-        console.log('DataViewer received toolbox:', toolboxData);
-        console.log('DataViewer received flow:', flowData);
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : 'Failed to fetch data';
-        console.error('DataViewer failed to fetch data:', errorMsg);
         setError(errorMsg);
       }
     };
 
     piApi.onConnectionError = (err) => {
-      console.error('DataViewer connection failed:', err);
       setError(err.message);
       setIsConnected(false);
-      setIsConnecting(false);
     };
 
     piApi.onDisconnected = () => {
-      console.log('DataViewer disconnected');
       setIsConnected(false);
-      setIsConnecting(false);
       setToolbox(null);
       setFlow(null);
     };
@@ -62,14 +52,13 @@ export const DataViewer = () : JSX.Element => {
   }, [piApi]);
 
   const handleConnect = () => {
-    if (!piApi || isConnecting) return;
-    setIsConnecting(true);
+    if (!piApi || isConnected) return;
     setError(null);
     piApi.connect();
   };
 
   const handleDisconnect = () => {
-    if (!piApi) return;
+    if (!piApi || !isConnected) return;
     piApi.disconnect();
   };
 
@@ -85,10 +74,10 @@ export const DataViewer = () : JSX.Element => {
       <div style={{ marginBottom: '20px' }}>
         <button 
           onClick={handleConnect} 
-          disabled={isConnected || isConnecting}
+          disabled={isConnected}
           style={{ marginRight: '10px' }}
         >
-          {isConnecting ? 'Connecting...' : 'Connect'}
+          Connect
         </button>
         <button 
           onClick={handleDisconnect} 
@@ -97,7 +86,7 @@ export const DataViewer = () : JSX.Element => {
           Disconnect
         </button>
         <span style={{ marginLeft: '10px' }}>
-          Status: {isConnected ? '🟢 Connected' : isConnecting ? '🟡 Connecting...' : '🔴 Disconnected'}
+          Status: {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
         </span>
       </div>
 
