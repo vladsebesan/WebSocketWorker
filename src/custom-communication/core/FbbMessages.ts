@@ -3,7 +3,7 @@
 // Generic helper to extract message union from any T class
 // 1. searches for the types of accessor
 
-import { Message, ProcessInstanceMessage, ProcessInstanceMessageT, ReplyT, RequestMessage, RequestT } from "../../generated/process-instance-message-api";
+import { Message, NotificationT, ProcessInstanceMessage, ProcessInstanceMessageT, ReplyT, RequestMessage, RequestT } from "../../generated/process-instance-message-api";
 import type { unionToMessage } from "../../generated/process-instance-message-api/message";
 import type { unionToRequestMessage } from "../../generated/process-instance-message-api/request-message";
 import * as flatbuffers from 'flatbuffers';
@@ -40,6 +40,11 @@ export interface IUnwrappedResult<T> {
   payload?: T;
   requestId: string;
   sessionId: string;
+}
+
+export interface IUnwrawpppedNotification {
+  sessionId: string;
+  notification: NotificationT;
 }
 
 // Thread-local builder instance
@@ -148,6 +153,20 @@ export const tryUnwrapReplyOfType = <T>(
   };
 };
 
+export const tryUnwrapNotification = (message: ProcessInstanceMessageT | null): null | NotificationT => {
+  if(!message) {
+    return null;
+  }
+  if(!message.message) {
+    return null;
+  }
+
+  if(message.messageType !== Message.Notification) {
+    return null;
+  }
+
+  return message.message as NotificationT;
+};
 
 export type FbbCollectionReader<T> = (index: number) => T;
 export declare class FbbCollection<T> {

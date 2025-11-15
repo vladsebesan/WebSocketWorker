@@ -1,7 +1,6 @@
-import { Message, ProcessInstanceMessageT, ReplyT } from '../../generated/process-instance-message-api';
+import { NotificationMessage, NotificationT, ReplyT } from '../../generated/process-instance-message-api';
 import type { ISessionConfig, ISession, ISessionState} from './Session';
-import {  tryUnwrapReply } from './FbbMessages';
-import type { IApiCommand } from '../IApiDefinition';
+import type { IApiCommand } from './IApiInterfaces';
 
 interface IPendingRequest {
   reject: (error: Error) => void;
@@ -92,30 +91,32 @@ export class MessageManager implements IMessageManager {
     this.pendingRequests.clear();
   }
 
-  private onSessionMessage(message: ProcessInstanceMessageT): void {   
-    switch (message.messageType) {
-      case Message.Reply:
-        const reply = tryUnwrapReply(message);
-        if (reply?.requestId) {
-          const requestId = reply.requestId.toString();
-          const pending = this.pendingRequests.get(requestId);
-          if (pending) {
-            this.pendingRequests.delete(requestId);
-            const result = pending.parseReply(reply);               // Use command-specific parser
-            if (result !== null) {
-              pending.resolve(result);
-            } else {
-              pending.reject(new Error('Failed to parse command reply'));
-            }
+  private onSessionMessage(message: NotificationT | ReplyT): void {
+    
+    if(message instanceof ReplyT) {
+      if (message.requestId) {
+        const requestId = message.requestId.toString();
+        const pending = this.pendingRequests.get(requestId);
+        if (pending) {
+          this.pendingRequests.delete(requestId);
+          const result = pending.parseReply(message);               // Use command-specific parser
+          if (result !== null) {
+            pending.resolve(result);
+          } else {
+            pending.reject(new Error('Failed to parse command reply'));
           }
         }
-        break;
-      case Message.Notification:
-        // Handle notifications
-        break;
-      default:
-        console.log('MessageManager: Received unsupported message of type:', Message[message.messageType]);
-        break;
+      }
+    }
+    else if(message instanceof NotificationT) {
+      //console.log('MessageManager: Received notification:', message);
+
+      console.log(`MessageManager: Received notification of type: ${NotificationMessage[message.messageType]} with sessionId:`, message.sessionId);
+      // new NotificationT();
+      // new FlowNotifyT()
+
+    } else {
+      console.log('MessageManager: Received unsupported message of type:', message);
     }
   }
 

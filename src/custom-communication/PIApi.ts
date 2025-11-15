@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 
 import type { IWebSocketURL } from '../interfaces/IWebsocketUrl';
-import type { IMessageManagerConfig, IMessageManagerState } from './worker-thread/MessageManager';
-import { WorkerCommandType, WorkerEventType, type WorkerCommand, type WorkerEvent } from './worker-thread/PIApiWorker';
+import type { IMessageManagerConfig, IMessageManagerState } from './core/MessageManager';
+import { WorkerCommandType, WorkerEventType, type WorkerCommand, type WorkerEvent } from './core/PIApiWorker';
 import { makeUUID } from '../utils/uuid';
-import { SessionState } from './worker-thread/Session';
+import { SessionState } from './core/Session';
 import type { IFlowModel, IToolboxModel } from '../interfaces/IFlow';
-import { Api } from './ApiDefinition';
-import type { IApiCommand } from './IApiDefinition';
+import { Api, type IFlowSubscribeReply } from './PiRequests';
+import type { IApiCommand } from './core/IApiInterfaces';
 
 export interface IPiApiConfig  extends IMessageManagerConfig {}
 
@@ -27,9 +27,9 @@ interface IPendingRequest {
   // Add: timeout: NodeJS.Timeout;
 }
 
-const WORKER_URL = new URL('./worker-thread/PIApiWorker.ts', import.meta.url);
+const WORKER_URL = new URL('./core/PIApiWorker.ts', import.meta.url);
 
-export class PiApi {
+export class PiApiBase {
   private state: IPiApiState;
   private worker: null | Worker = null;
   private config: IPiApiConfig;
@@ -93,25 +93,14 @@ export class PiApi {
     }
   }
 
-  // TODO: AI: Hardcoded timeout (10000ms). Should be configurable via config or environment variable for 
-  // different deployment scenarios (dev/staging/prod may need different timeouts).
-  public async getToolbox(): Promise<IToolboxModel> {
-    const command = Api.ToolboxGet({});
-    return this.sendRequest(command, 10000);
-  }
 
-  // TODO: AI: Hardcoded timeout (10000ms). Should be configurable.
-  public async getFlow(): Promise<IFlowModel> {
-    const command = Api.FlowGet({});
-    return this.sendRequest(command, 10000);
-  }
 
   // TODO: AI: CRITICAL ISSUE - No client-side timeout mechanism. This relies entirely on the worker to timeout.
   // If the worker crashes, freezes, or never responds, these promises will never resolve/reject, causing memory leaks.
   // Should implement a timeout here as a safety mechanism (similar to MessageManager.sendRequest).
   // Also missing: request deduplication (rapid clicks send duplicate requests), request cancellation (cannot abort 
   // long-running requests when user navigates away).
-  private async sendRequest<TParams, TResult>(
+  protected async sendRequest<TParams, TResult>(
     command: IApiCommand<TParams, TResult>,
     timeoutMs: number = 5000
   ): Promise<TResult> {
@@ -286,6 +275,29 @@ export class PiApi {
   //   };
   // };
 }
+
+
+class PiApi extends PiApiBase {
+  constructor(config: IPiApiConfig) {
+    super(config);
+  }
+
+  public async getToolbox(): Promise<IToolboxModel> {
+    const command = Api.ToolboxGet({});
+    return super.sendRequest(command, 10000);
+  }
+
+  public async getFlow(): Promise<IFlowModel> {
+    const command = Api.FlowGet({});
+    return super.sendRequest(command, 10000);
+  }
+
+  public async subscribeToFlow(): Promise<IFlowSubscribeReply> {
+    const command = Api.FlowSubscribe({});
+    return super.sendRequest(command, 10000);
+  }
+}
+
 
 // TODO: AI: CRITICAL - Multiple issues with this hook:
 // 1. Returns null! (non-null assertion on nullable value) - causes crashes when components try to use piApi before initialization

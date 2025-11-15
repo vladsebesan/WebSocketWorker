@@ -1,13 +1,12 @@
-import { FlowGetReplyT, FlowGetT, FlowLinkEntryT, FlowModuleEntryT, FlowPortT, FlowStartType, FlowStateDetailsT, type ReplyT, type ToolboxGetReplyT } from '../generated/process-instance-message-api';
+import { FlowGetReplyT, FlowGetT, FlowLinkEntryT, FlowModuleEntryT, FlowPortT, FlowStartType, FlowStateDetailsT, FlowSubscribeReplyT, FlowSubscribeT, type ReplyT, type ToolboxGetReplyT } from '../generated/process-instance-message-api';
 import { ToolboxGetT } from '../generated/process-instance-message-api/toolbox-get';
 import { type IFlowModel,type IFlowModule,type IToolboxEntry,type IToolboxModel,type IPort, Visibility, type IFlowModuleLink, type IFlowStateDetails, EnumFlowStartType } from '../interfaces/IFlow';
-import { makeRequestMessageBuffer } from './worker-thread/FbbMessages';
-import { createApiFromCommands, type IApiCommand } from './IApiDefinition';
+import { makeRequestMessageBuffer } from './core/FbbMessages';
+import { createApiFromCommands, type IApiCommand } from './core/IApiInterfaces';
 
 import {Visibility as FBVisibility} from '../generated/types-common-api';
 
 export interface IToolboxGetParams {} // match the param of the fbs command
-
 export class ToolboxGet implements IApiCommand<IToolboxGetParams, IToolboxModel> {
   readonly commandType = 'ToolboxGet';
   readonly params: IToolboxGetParams;
@@ -39,7 +38,6 @@ export class ToolboxGet implements IApiCommand<IToolboxGetParams, IToolboxModel>
 }
 
 export interface IFlowGetParams {} // match the param of the fbs command
-
 export class FlowGet implements IApiCommand<IFlowGetParams, IFlowModel> {
   readonly commandType = 'FlowGet';
   readonly params: IFlowGetParams;
@@ -145,8 +143,32 @@ static mapFlowLink = (l: FlowLinkEntryT): IFlowModuleLink => {
   }
 }
 
+export interface IFlowSubscribeParams {};
+export interface IFlowSubscribeReply {subscriptionId: string;}
+export class FlowSubscribe implements IApiCommand<IFlowSubscribeParams, IFlowSubscribeReply> {
+  readonly commandType = 'FlowSubscribe';
+  readonly params: IFlowSubscribeParams;
+  constructor(params: IFlowSubscribeParams) {
+    this.params = params;
+  }
+
+  serialize(requestId: string, sessionId: string): Uint8Array {
+    const cmd = new FlowSubscribeT();
+    return makeRequestMessageBuffer(cmd, requestId, sessionId);
+  }
+
+
+  deserialize(reply: ReplyT): IFlowSubscribeReply | null {   
+    const replyT = reply.message as FlowSubscribeReplyT;  
+    return {
+        subscriptionId: replyT.subscriptionId,
+    } as IFlowSubscribeReply;
+  }
+}
+
 export const Api = createApiFromCommands({
   ToolboxGet,
   FlowGet,
+  FlowSubscribe,
 });
 

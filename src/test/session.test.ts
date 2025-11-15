@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { Session, SessionState, type ISessionConfig, type ISessionState } from '../custom-communication/worker-thread/Session'
-import type { ITransport } from '../custom-communication/worker-thread/Transport'
+import { Session, SessionState, type ISessionConfig, type ISessionState } from '../custom-communication/core/Session'
+import type { ITransport } from '../custom-communication/core/Transport'
 import { SessionCreateReplyT, SessionKeepaliveReplyT } from '../generated/process-instance-message-api'
 import { ProcessInstanceMessageT, ReplyT, StatusT, Message, ReplyMessage } from '../generated/process-instance-message-api'
 import * as flatbuffers from 'flatbuffers'

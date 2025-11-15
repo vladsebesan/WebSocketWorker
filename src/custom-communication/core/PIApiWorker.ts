@@ -2,7 +2,7 @@ import type { IPiApiConfig, IPiApiState } from '../PiApi';
 import { MessageManager } from './MessageManager';
 import { Session } from './Session';
 import { Transport } from './Transport';
-import { Api } from '../ApiDefinition';
+import { Api } from '../PiRequests';
 
 export enum WorkerCommandType {
   CONNECT = 'CONNECT',

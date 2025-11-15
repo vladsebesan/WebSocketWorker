@@ -1,7 +1,7 @@
 import type { ITransport } from './Transport';
 
-import { makeRequestMessageBuffer, tryUnwrapPiMessageBuffer, tryUnwrapReply, tryUnwrapReplyOfType } from './FbbMessages';
-import { ProcessInstanceMessageT, SessionCreateReplyT, SessionCreateT, SessionDestroyT, SessionKeepaliveReplyT, SessionKeepaliveT } from '../../generated/process-instance-message-api';
+import { makeRequestMessageBuffer, tryUnwrapNotification, tryUnwrapPiMessageBuffer, tryUnwrapReply } from './FbbMessages';
+import { Message, NotificationT, ReplyMessage, ReplyT, SessionCreateT, SessionDestroyT, SessionKeepaliveT } from '../../generated/process-instance-message-api';
 import { makeUUID } from '../../utils/uuid';
 
 export enum SessionState {
@@ -30,7 +30,7 @@ export interface ISessionState {
 export interface ISession {
   connect: (config: ISessionConfig) => void;
   disconnect: () => void;
-  onMessage: ((message: ProcessInstanceMessageT) => void) | null;
+  onMessage: ((message: NotificationT | ReplyT) => void) | null;
   onConnected: (() => void) | null;
   onDisconnected: (() => void) | null;
   onStateChanged: ((state: ISessionState) => void) | null;
@@ -66,7 +66,7 @@ export class Session implements ISession {
     this.transportLayer.onMessage = this.onTlMessage.bind(this);
   }
 
-  public onMessage: ((message: ProcessInstanceMessageT) => void) | null = null;
+  public onMessage: ((message: NotificationT | ReplyT) => void) | null = null;
   public onConnected: (() => void) | null = null;
   public onDisconnected: (() => void) | null = null;
   public onStateChanged: ((state: ISessionState) => void) | null = null;
@@ -307,6 +307,10 @@ export class Session implements ISession {
     }
   };
 
+  private validateSessionId = (message: ReplyT | NotificationT): boolean => {
+    return message.sessionId !== null && this.state.sessionId !== null && message.sessionId === this.state.sessionId;
+  }
+
   onTlMessage = (buffer: Uint8Array): void => {
     // we've received a message, so communication is still alive
     this.lastReceivedMessageTime = Date.now();
@@ -317,48 +321,70 @@ export class Session implements ISession {
       return;
     }
 
-    //if this is a SessionKeepaliveReply message handle it here
-    {
-      const res = tryUnwrapReplyOfType(tryUnwrapReply(piMessage), SessionKeepaliveReplyT);
-      if (res?.payload instanceof SessionKeepaliveReplyT) {
+    switch (piMessage.messageType) {
+      case Message.Reply:
+        {
+          // 1. check for illformed reply
+          const reply = tryUnwrapReply(piMessage);
+          if (!reply) {
+            break;
+          }
 
-        // Validate that the keepalive reply sessionId matches our current session
-        if (this.state.sessionId && res.sessionId !== this.state.sessionId) {
-          console.warn(`Received keepalive reply with mismatched sessionId. Expected: ${this.state.sessionId}, Received: ${res.sessionId}`);
-          return; //we still ingest the message but reject the keepalive reply
+          // 3.1. handle session-related replies internally
+          if(reply.messageType === ReplyMessage.SessionCreateReply) {
+            this.keepaliveFailureCount = 0; // Reset failure count on successful keepalive response
+            this.updateState({
+              reconnectAttemptsLeft: this.config.maxReconnectAttempts, // Reset to full attempts on successful keepalive
+              sessionId: reply.sessionId!.toString(),
+              sessionState: SessionState.CONNECTED,
+            });
+            this.startKeepaliveTimer(); // Start keepalive timer when session is connected
+            this.onConnected?.(); //Notify about successful connection
+            return;
+          // 3.2. handle session-related replies internally
+          } else if(reply.messageType === ReplyMessage.SessionKeepaliveReply) {
+            this.keepaliveFailureCount = 0; // Reset failure count on successful session creation
+            this.stopReconnectTimer(); // Stop any pending reconnection attempts
+            this.updateState({
+              reconnectAttemptsLeft: this.config.maxReconnectAttempts, // Reset to full attempts on successful connection
+              sessionId: reply.sessionId!.toString(),
+              sessionState: SessionState.CONNECTED,
+            });
+            return;
+          } 
+          // 3.3. forward all other replies to onMessage handler
+          else {
+            // 2. sessions must match before we proceed
+            if (!this.validateSessionId(reply)) {
+              console.warn(`Received reply with mismatched sessionId. Expected: ${this.state.sessionId}, Received: ${reply.sessionId}`);
+              return;
+            }
+            this.onMessage?.(reply);
+          }
         }
-        this.keepaliveFailureCount = 0; // Reset failure count on successful keepalive response
-        this.updateState({
-          reconnectAttemptsLeft: this.config.maxReconnectAttempts, // Reset to full attempts on successful keepalive
-          sessionId: res.sessionId,
-          sessionState: SessionState.CONNECTED,
-        });
-        //console.log('Keepalive response received');
-        return;
-      }
-    }
+        break;
+      case Message.Notification:
+        {
+          // 1. check for illformed notification
+          const notif = tryUnwrapNotification(piMessage);
+          if (!notif) {
+            console.warn('Received malformed notification message');
+            return;
+          }
 
-    //if this is a SessionCreateReply message handle it here
-    {
-      const res = tryUnwrapReplyOfType(tryUnwrapReply(piMessage), SessionCreateReplyT);
-      if (res?.payload instanceof SessionCreateReplyT) {
-        this.keepaliveFailureCount = 0; // Reset failure count on successful session creation
-        this.stopReconnectTimer(); // Stop any pending reconnection attempts
-        this.updateState({
-          reconnectAttemptsLeft: this.config.maxReconnectAttempts, // Reset to full attempts on successful connection
-          sessionId: res.sessionId,
-          sessionState: SessionState.CONNECTED,
-        });
-        this.startKeepaliveTimer(); // Start keepalive timer when session is connected
-        if (this.onConnected) {
-          this.onConnected(); //Notify about successful connection
+          // 2. sessions must match before we proceed
+          if (!this.validateSessionId(notif)) {
+            console.warn(`Received reply with mismatched sessionId. Expected: ${this.state.sessionId}, Received: ${notif.sessionId}`);
+            return;
+          }
+
+          this.onMessage?.(notif);
         }
+        break;
+      default:
+        console.warn('Received unsupported message type:', Message[piMessage.messageType]);
         return;
-      }
     }
-
-    // everything else is forwarded to onMessage handler
-    if (this.onMessage) this.onMessage(piMessage);
   };
 
   sendSessionCreate = (): void => {

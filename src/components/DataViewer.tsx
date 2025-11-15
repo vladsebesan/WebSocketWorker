@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { IFlowModel, IToolboxModel } from "../interfaces/IFlow";
 import { usePiApi } from "../custom-communication/PiApi";
+import type { IFlowSubscribeReply } from "../custom-communication/PiRequests";
 
 export const DataViewer = () : JSX.Element => {
   const piApi = usePiApi();
@@ -8,28 +9,15 @@ export const DataViewer = () : JSX.Element => {
   const [error, setError] = useState<string | null>(null);
   const [toolbox, setToolbox] = useState<IToolboxModel | null>(null);
   const [flow, setFlow] = useState<IFlowModel | null>(null);
+  const [flowSubscription, setFlowSubscription] = useState<IFlowSubscribeReply | null>(null);
   
   useEffect(() => {
     if (!piApi) return;
 
     // Setup connection callbacks
-    piApi.onConnected = async () => {
+    piApi.onConnected = () => {
       setIsConnected(true);
       setError(null);
-
-      // Fetch data after connection
-      try {
-        const [toolboxData, flowData] = await Promise.all([
-          piApi.getToolbox(),
-          piApi.getFlow()
-        ]);
-        
-        setToolbox(toolboxData);
-        setFlow(flowData);
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : 'Failed to fetch data';
-        setError(errorMsg);
-      }
     };
 
     piApi.onConnectionError = (err) => {
@@ -41,6 +29,7 @@ export const DataViewer = () : JSX.Element => {
       setIsConnected(false);
       setToolbox(null);
       setFlow(null);
+      setFlowSubscription(null);
     };
 
     // Cleanup
@@ -60,6 +49,42 @@ export const DataViewer = () : JSX.Element => {
   const handleDisconnect = () => {
     if (!piApi || !isConnected) return;
     piApi.disconnect();
+  };
+
+  const handleGetToolbox = async () => {
+    if (!piApi || !isConnected) return;
+    try {
+      setError(null);
+      const toolboxData = await piApi.getToolbox();
+      setToolbox(toolboxData);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to get toolbox';
+      setError(errorMsg);
+    }
+  };
+
+  const handleGetFlow = async () => {
+    if (!piApi || !isConnected) return;
+    try {
+      setError(null);
+      const flowData = await piApi.getFlow();
+      setFlow(flowData);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to get flow';
+      setError(errorMsg);
+    }
+  };
+
+  const handleSubscribeToFlow = async () => {
+    if (!piApi || !isConnected) return;
+    try {
+      setError(null);
+      const subscriptionReply = await piApi.subscribeToFlow();
+      setFlowSubscription(subscriptionReply);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to subscribe to flow';
+      setError(errorMsg);
+    }
   };
 
   // Handle loading state while piApi is initializing
@@ -82,6 +107,7 @@ export const DataViewer = () : JSX.Element => {
         <button 
           onClick={handleDisconnect} 
           disabled={!isConnected}
+          style={{ marginRight: '10px' }}
         >
           Disconnect
         </button>
@@ -89,6 +115,32 @@ export const DataViewer = () : JSX.Element => {
           Status: {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
         </span>
       </div>
+
+      {isConnected && (
+        <div style={{ marginBottom: '20px' }}>
+          <button 
+            onClick={handleGetToolbox} 
+            disabled={!isConnected}
+            style={{ marginRight: '10px' }}
+          >
+            Get Toolbox
+          </button>
+          <button 
+            onClick={handleGetFlow} 
+            disabled={!isConnected}
+            style={{ marginRight: '10px' }}
+          >
+            Get Flow
+          </button>
+          <button 
+            onClick={handleSubscribeToFlow} 
+            disabled={!isConnected}
+            style={{ marginRight: '10px' }}
+          >
+            Subscribe to Flow
+          </button>
+        </div>
+      )}
 
       {error && (
         <div style={{ color: 'red', marginBottom: '10px' }}>
@@ -100,6 +152,7 @@ export const DataViewer = () : JSX.Element => {
         <div>
           {toolbox && <div>✅ Toolbox loaded with {Object.keys(toolbox).length} items</div>}
           {flow && <div>✅ Flow loaded</div>}
+          {flowSubscription && <div>✅ Flow subscription active</div>}
         </div>
       )}
     </div>
