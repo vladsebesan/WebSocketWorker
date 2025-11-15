@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { IFlowModel, IToolboxModel } from "../interfaces/IFlow";
 import { usePiApi } from "../custom-communication/PiApi";
-import type { IFlowSubscribeReply } from "../custom-communication/PiRequests";
+import { Subscriptions, type IFlowNotificationData } from "../custom-communication/PiNotifications";
 
 export const DataViewer = () : JSX.Element => {
   const piApi = usePiApi();
@@ -9,7 +9,8 @@ export const DataViewer = () : JSX.Element => {
   const [error, setError] = useState<string | null>(null);
   const [toolbox, setToolbox] = useState<IToolboxModel | null>(null);
   const [flow, setFlow] = useState<IFlowModel | null>(null);
-  const [flowSubscription, setFlowSubscription] = useState<IFlowSubscribeReply | null>(null);
+  const [subscriptionInternalId, setSubscriptionInternalId] = useState<string | null>(null);
+  const [notificationCount, setNotificationCount] = useState<number>(0);
   
   useEffect(() => {
     if (!piApi) return;
@@ -29,7 +30,8 @@ export const DataViewer = () : JSX.Element => {
       setIsConnected(false);
       setToolbox(null);
       setFlow(null);
-      setFlowSubscription(null);
+      setSubscriptionInternalId(null);
+      setNotificationCount(0);
     };
 
     // Cleanup
@@ -79,12 +81,37 @@ export const DataViewer = () : JSX.Element => {
     if (!piApi || !isConnected) return;
     try {
       setError(null);
-      const subscriptionReply = await piApi.subscribeToFlow();
-      setFlowSubscription(subscriptionReply);
+      
+      // Create subscription with callback and error handler
+      const subscription = Subscriptions.Flow(
+        (data: IFlowNotificationData) => {
+          console.log('DataViewer: Received flow notification:', data);
+          setNotificationCount(prev => prev + 1);
+          // TODO: Apply incremental updates to flow state
+          // data.addedModules, data.changedModules, data.removedModules, etc.
+        },
+        (error: Error) => {
+          console.error('DataViewer: Subscription error:', error);
+          setError(error.message);
+        }
+      );
+      
+      // Subscribe and get internal ID
+      const internalId = await piApi.subscribe(subscription, {});
+      setSubscriptionInternalId(internalId);
+      
+      console.log(`DataViewer: Subscribed with internalId: ${internalId}`);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to subscribe to flow';
       setError(errorMsg);
     }
+  };
+
+  const handleUnsubscribeFromFlow = () => {
+    if (!piApi || !subscriptionInternalId) return;
+    piApi.unsubscribe(subscriptionInternalId);
+    setSubscriptionInternalId(null);
+    setNotificationCount(0);
   };
 
   // Handle loading state while piApi is initializing
@@ -134,10 +161,17 @@ export const DataViewer = () : JSX.Element => {
           </button>
           <button 
             onClick={handleSubscribeToFlow} 
-            disabled={!isConnected}
+            disabled={!isConnected || !!subscriptionInternalId}
             style={{ marginRight: '10px' }}
           >
             Subscribe to Flow
+          </button>
+          <button 
+            onClick={handleUnsubscribeFromFlow} 
+            disabled={!subscriptionInternalId}
+            style={{ marginRight: '10px' }}
+          >
+            Unsubscribe from Flow
           </button>
         </div>
       )}
@@ -152,7 +186,13 @@ export const DataViewer = () : JSX.Element => {
         <div>
           {toolbox && <div>✅ Toolbox loaded with {Object.keys(toolbox).length} items</div>}
           {flow && <div>✅ Flow loaded</div>}
-          {flowSubscription && <div>✅ Flow subscription active</div>}
+          {subscriptionInternalId && (
+            <div>
+              ✅ Flow subscription active (ID: {subscriptionInternalId})
+              <br />
+              📬 Notifications received: {notificationCount}
+            </div>
+          )}
         </div>
       )}
     </div>

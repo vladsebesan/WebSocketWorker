@@ -7,17 +7,25 @@ import { makeUUID } from '../utils/uuid';
 import { SessionState } from './core/Session';
 import type { IFlowModel, IToolboxModel } from '../interfaces/IFlow';
 import { Api, type IFlowSubscribeReply } from './PiRequests';
-import type { IApiCommand } from './core/IApiInterfaces';
+import type { IApiCommand, IApiSubscription } from './core/IApiInterfaces';
+import type { NotificationT } from '../generated/process-instance-message-api';
 
 export interface IPiApiConfig  extends IMessageManagerConfig {}
 
 export interface IPiApiState extends IMessageManagerState {}
 
-// interface IActiveSubscription {
-//   callback: IPIApiNotificationCallback<any>;
-//   subscribeCommandType: WorkerCommandType;
-//   unsubscribeCommandType: WorkerCommandType;
-// }
+// Internal subscription tracking object
+class Subscription {
+  internalId: string;
+  subscriptionId: string | null = null;
+  apiSubscription: IApiSubscription<any, any, any>;
+  state: 'pending' | 'active' | 'closed' = 'pending';
+
+  constructor(apiSubscription: IApiSubscription<any, any, any>) {
+    this.internalId = makeUUID();
+    this.apiSubscription = apiSubscription;
+  }
+}
 
 // TODO: AI: CRITICAL - Missing timeout property. These promises can hang forever if worker crashes or never 
 // responds, causing unbounded memory growth from orphaned promises and their closures.
@@ -34,8 +42,8 @@ export class PiApiBase {
   private worker: null | Worker = null;
   private config: IPiApiConfig;
   private pendingRequests = new Map<string, IPendingRequest>();
-  //private stateChangeCallbacks = new Set<IPIApiNotificationCallback<IPiApiState>>();
-  //private subscriptions = new Map<string, IActiveSubscription>();
+  private subscriptions = new Map<string, Subscription>(); // Map<internalId, Subscription>
+  private subscriptionIdMap = new Map<string, string>(); // Map<subscriptionId, internalId>
 
   onConnected: (() => void) | null = null;
   onDisconnected: (() => void) | null = null;
@@ -201,15 +209,32 @@ export class PiApiBase {
         }
         break;
       case WorkerEventType.NOTIFICATION:
-        // Find subscriptions that match this notification type
-        // for (const subscription of this.subscriptions.values()) {
-        //   // Call the callback with the notification data
-        //   try {
-        //     subscription.callback((response as any).data);
-        //   } catch (error) {
-        //     console.error('Error in notification callback:', error);
-        //   }
-        // }
+        const notifResponse = response as any;
+        const notificationData = notifResponse.data as NotificationT;
+        
+        // Extract subscriptionId from notification (assuming backend includes it)
+        // For now, use sessionId as placeholder
+        const notifSubscriptionId = notificationData.sessionId?.toString() || '';
+        
+        // Find subscription by subscriptionId
+        const internalId = this.subscriptionIdMap.get(notifSubscriptionId);
+        if (internalId) {
+          const subscription = this.subscriptions.get(internalId);
+          if (subscription && subscription.state === 'active') {
+            try {
+              // Deserialize notification using subscription's deserializer
+              const deserializedData = subscription.apiSubscription.deserialize(notificationData);
+              if (deserializedData) {
+                // Invoke subscription callback
+                (subscription.apiSubscription as any).invokeCallback(deserializedData);
+              }
+            } catch (error) {
+              console.error(`PiApi: Error processing notification for subscription ${internalId}:`, error);
+            }
+          }
+        } else {
+          console.warn(`PiApi: Received notification for unknown subscriptionId: ${notifSubscriptionId}`);
+        }
         break;
       default:
         // TODO: AI: Remove console.log from production code
@@ -225,55 +250,80 @@ export class PiApiBase {
     }
     this.pendingRequests.clear();
 
-    // Clear subscriptions
-    //this.subscriptions.clear();
-    //this.stateChangeCallbacks.clear();
+    // Mark all subscriptions as closed (no auto-resubscribe)
+    for (const [, subscription] of this.subscriptions) {
+      subscription.state = 'closed';
+    }
+    this.subscriptions.clear();
+    this.subscriptionIdMap.clear();
   }
 
+  public async subscribe<TParams, TReply, TNotifData>(
+    apiSubscription: IApiSubscription<TParams, TReply, TNotifData>,
+    params: TParams
+  ): Promise<string> {
+    // Create internal subscription object
+    const subscription = new Subscription(apiSubscription);
+    this.subscriptions.set(subscription.internalId, subscription);
 
+    try {
+      // Create subscribe command
+      const subscribeCommand = apiSubscription.subscribe(params);
+      
+      // Send subscribe request and wait for subscriptionId
+      const reply = await this.sendRequest<TParams, TReply>(subscribeCommand, 10000);
+      
+      // Extract subscriptionId from reply (assuming it has subscriptionId property)
+      const subscriptionId = (reply as any).subscriptionId;
+      if (!subscriptionId) {
+        throw new Error('Subscribe reply did not contain subscriptionId');
+      }
 
-  // public subscribeToNotifications<T>(
-  //   subscribeCommandType: WorkerCommandType,
-  //   unsubscribeCommandType: WorkerCommandType,
-  //   callback: IPIApiNotificationCallback<T>,
-  // ): IPIApiSubscription {
-  //   const subscriptionId = this.generateRequestId();
+      // Update subscription state
+      subscription.subscriptionId = subscriptionId;
+      subscription.state = 'active';
+      
+      // Map subscriptionId to internalId for notification routing
+      this.subscriptionIdMap.set(subscriptionId, subscription.internalId);
+      
+      console.log(`PiApi: Subscription active - internalId: ${subscription.internalId}, subscriptionId: ${subscriptionId}`);
+      
+      return subscription.internalId;
+    } catch (error) {
+      // Cleanup failed subscription
+      this.subscriptions.delete(subscription.internalId);
+      throw error;
+    }
+  }
 
-  //   // Store the subscription
-  //   this.subscriptions.set(subscriptionId, {
-  //     callback,
-  //     subscribeCommandType,
-  //     unsubscribeCommandType,
-  //   });
+  public unsubscribe(internalId: string): void {
+    const subscription = this.subscriptions.get(internalId);
+    if (!subscription) {
+      console.warn(`PiApi: Cannot unsubscribe - subscription ${internalId} not found`);
+      return;
+    }
 
-  //   // Send subscribe command
-  //   const command: IPIApiGenericCommand = {
-  //     requestId: subscriptionId,
-  //     type: subscribeCommandType,
-  //   };
-  //   this.sendCommandInternal(command).catch((error) => {
-  //     console.error('Failed to subscribe:', error);
-  //     this.subscriptions.delete(subscriptionId);
-  //   });
+    // Mark as closed
+    subscription.state = 'closed';
 
-  //   return {
-  //     unsubscribe: (): void => {
-  //       const subscription = this.subscriptions.get(subscriptionId);
-  //       if (subscription) {
-  //         this.subscriptions.delete(subscriptionId);
+    // Send unsubscribe command if available
+    if (subscription.subscriptionId) {
+      const unsubscribeCommand = subscription.apiSubscription.unsubscribe(subscription.subscriptionId);
+      if (unsubscribeCommand) {
+        this.sendRequest(unsubscribeCommand, 5000).catch((error) => {
+          console.error(`PiApi: Error sending unsubscribe command:`, error);
+        });
+      }
+      
+      // Remove from subscriptionId map
+      this.subscriptionIdMap.delete(subscription.subscriptionId);
+    }
 
-  //         // Send unsubscribe command
-  //         const unsubscribeCommand: IPIApiGenericCommand = {
-  //           requestId: this.generateRequestId(),
-  //           type: subscription.unsubscribeCommandType,
-  //         };
-  //         this.sendCommandInternal(unsubscribeCommand).catch((error) => {
-  //           console.error('Failed to unsubscribe:', error);
-  //         });
-  //       }
-  //     },
-  //   };
-  // };
+    // Remove from subscriptions map
+    this.subscriptions.delete(internalId);
+    
+    console.log(`PiApi: Unsubscribed from ${internalId}`);
+  }
 }
 
 
@@ -289,11 +339,6 @@ class PiApi extends PiApiBase {
 
   public async getFlow(): Promise<IFlowModel> {
     const command = Api.FlowGet({});
-    return super.sendRequest(command, 10000);
-  }
-
-  public async subscribeToFlow(): Promise<IFlowSubscribeReply> {
-    const command = Api.FlowSubscribe({});
     return super.sendRequest(command, 10000);
   }
 }

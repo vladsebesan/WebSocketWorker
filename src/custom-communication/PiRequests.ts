@@ -1,4 +1,4 @@
-import { FlowGetReplyT, FlowGetT, FlowLinkEntryT, FlowModuleEntryT, FlowPortT, FlowStartType, FlowStateDetailsT, FlowSubscribeReplyT, FlowSubscribeT, type ReplyT, type ToolboxGetReplyT } from '../generated/process-instance-message-api';
+import { FlowGetReplyT, FlowGetT, FlowLinkEntryT, FlowModuleEntryT, FlowPortT, FlowStartType, FlowStateDetailsT, FlowSubscribeReplyT, FlowSubscribeT, FlowUnsubscribeT, type ReplyT, type ToolboxGetReplyT } from '../generated/process-instance-message-api';
 import { ToolboxGetT } from '../generated/process-instance-message-api/toolbox-get';
 import { type IFlowModel,type IFlowModule,type IToolboxEntry,type IToolboxModel,type IPort, Visibility, type IFlowModuleLink, type IFlowStateDetails, EnumFlowStartType } from '../interfaces/IFlow';
 import { makeRequestMessageBuffer } from './core/FbbMessages';
@@ -166,9 +166,29 @@ export class FlowSubscribe implements IApiCommand<IFlowSubscribeParams, IFlowSub
   }
 }
 
+export interface IFlowUnsubscribeParams {subscriptionId: string;}
+export interface IFlowUnsubscribeReply {};
+export class FlowUnsubscribe implements IApiCommand<IFlowUnsubscribeParams, IFlowUnsubscribeReply> {
+  readonly commandType = 'FlowUnsubscribe';
+  readonly params: IFlowUnsubscribeParams;
+  constructor(params: IFlowUnsubscribeParams) {
+    this.params = params;
+  }
+
+  serialize(requestId: string, sessionId: string): Uint8Array {
+    const cmd = new FlowUnsubscribeT(this.params.subscriptionId);
+    return makeRequestMessageBuffer(cmd, requestId, sessionId);
+  }
+
+  deserialize(_reply: ReplyT): IFlowUnsubscribeReply | null {   
+    return {} as IFlowUnsubscribeReply;
+  }
+}
+
 export const Api = createApiFromCommands({
   ToolboxGet,
   FlowGet,
   FlowSubscribe,
+  FlowUnsubscribe,
 });
 
