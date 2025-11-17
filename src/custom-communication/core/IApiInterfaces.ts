@@ -7,10 +7,10 @@ export interface IApiCommand<TParams, TResult> {
   deserialize(reply: ReplyT): TResult | null;
 }
 
-export interface IApiNotification<TData> {
-  readonly notificationType: string;
-  deserialize(notification: NotificationT): TData | null;
-}
+// export interface IApiNotification<TData> {
+//   readonly notificationType: string;
+//   deserialize(notification: NotificationT): TData | null;
+// }
 
 export interface IApiSubscription<TParams, TReply, TNotifData> {
   readonly subscriptionName: string;

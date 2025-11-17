@@ -1,27 +1,17 @@
 import { NotificationMessage, type NotificationT, type FlowNotifyT } from '../generated/process-instance-message-api';
+import type { IFlowUpdate } from '../interfaces/IFlow';
 import type { IApiSubscription, IApiCommand } from './core/IApiInterfaces';
 import { createApiFromSubscriptions } from './core/IApiInterfaces';
 import { Api, type IFlowSubscribeParams, type IFlowSubscribeReply } from './PiRequests';
 
-// Deserialized flow notification data
-export interface IFlowNotificationData {
-  subscriptionId: string; // Extracted from notification (assuming backend includes it)
-  addedModules: any[];
-  changedModules: any[];
-  removedModules: string[];
-  addedLinks: any[];
-  removedLinks: string[];
-  flowStateDetails: any;
-}
 
-// Flow subscription implementation
-export class FlowSubscription implements IApiSubscription<IFlowSubscribeParams, IFlowSubscribeReply, IFlowNotificationData> {
+export class FlowSubscription implements IApiSubscription<IFlowSubscribeParams, IFlowSubscribeReply, IFlowUpdate> {
   readonly subscriptionName = 'FlowSubscription';
   
-  private notify: (data: IFlowNotificationData) => void;
+  private notify: (data: IFlowUpdate) => void;
   private onError?: (error: Error) => void;
 
-  constructor(callback: (data: IFlowNotificationData) => void, onError?: (error: Error) => void) {
+  constructor(callback: (data: IFlowUpdate) => void, onError?: (error: Error) => void) {
     this.notify = callback;
     this.onError = onError;
   }
@@ -34,7 +24,7 @@ export class FlowSubscription implements IApiSubscription<IFlowSubscribeParams, 
     return Api.FlowUnsubscribe({ subscriptionId: subscriptionId });
   }
 
-  deserialize(notification: NotificationT): IFlowNotificationData | null {
+  deserialize(notification: NotificationT): IFlowUpdate | null {
     try {
       if (notification.messageType !== NotificationMessage.FlowNotify) {
         return null;
@@ -46,7 +36,6 @@ export class FlowSubscription implements IApiSubscription<IFlowSubscribeParams, 
       // This would need to be extracted from the notification payload
       // For now, we'll use sessionId as a placeholder
       const subscriptionId = notification.sessionId?.toString() || '';
-
       return {
         subscriptionId,
         addedModules: flowNotify.addedModules || [],
@@ -66,19 +55,19 @@ export class FlowSubscription implements IApiSubscription<IFlowSubscribeParams, 
   }
 
   // Expose callback for PiApi to invoke
-//   public callNotify(data: IFlowNotificationData): void {
-//     try {
-//       this.notify(data);
-//     } catch (error) {
-//       if (this.onError) {
-//         const err = error instanceof Error ? error : new Error('Error in subscription callback');
-//         this.onError(err);
-//       }
-//     }
-//   }
+  public callNotify(data: IFlowUpdate): void {
+    try {
+      this.notify(data);
+    } catch (error) {
+      if (this.onError) {
+        const err = error instanceof Error ? error : new Error('Error in subscription callback');
+        this.onError(err);
+      }
+    }
+  }
 }
 
 // Export subscription registry
 export const Subscriptions = createApiFromSubscriptions({
-  Flow: FlowSubscription,
+  FlowSubscription,
 });

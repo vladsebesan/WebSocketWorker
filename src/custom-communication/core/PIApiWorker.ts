@@ -1,13 +1,16 @@
-import type { IPiApiConfig, IPiApiState } from '../PiApi';
 import { MessageManager } from './MessageManager';
 import { Session } from './Session';
 import { Transport } from './Transport';
 import { Api } from '../PiRequests';
+import { Subscriptions } from '../PiNotifications';
+import type { IPiApiConfig, IPiApiState } from './PIApiBase';
 
 export enum WorkerCommandType {
   CONNECT = 'CONNECT',
   DISCONNECT = 'DISCONNECT',
   SEND_REQUEST = 'SEND_REQUEST',
+  SUBSCRIBE = 'SUBSCRIBE',
+  UNSUBSCRIBE = 'UNSUBSCRIBE',
 }
 
 export enum WorkerEventType {
@@ -36,6 +39,20 @@ export interface WorkerSendRequest {
   timeoutMs: number;
 }
 
+export interface WorkerSubscribe {
+  requestId: string;
+  type: WorkerCommandType.SUBSCRIBE;
+  subscriptionName: string;
+  params: any;
+  internalId: string;
+}
+
+export interface WorkerUnsubscribe {
+  requestId: string;
+  type: WorkerCommandType.UNSUBSCRIBE;
+  subscriptionId: string;
+}
+
 export interface WorkerReply<T> {
   requestId: string; 
   data?: T; //data might be null for errors OR void replies
@@ -47,7 +64,7 @@ export interface WorkerReply<T> {
 
 export interface WorkerNotification<T> {
   data: T;
-  subscriptionId: string;
+  internalId: string;
   type: WorkerEventType.NOTIFICATION;
 }
 
@@ -59,7 +76,9 @@ export interface WorkerStateChangedEvent{
 export type WorkerCommand =
   | WorkerConnect
   | WorkerDisconnect
-  | WorkerSendRequest;
+  | WorkerSendRequest
+  | WorkerSubscribe
+  | WorkerUnsubscribe;
 
 
 export type WorkerEvent = 
@@ -70,6 +89,7 @@ export type WorkerEvent =
 class PIApiWorker {
   private messageManager!: MessageManager;
   private pendingConnectionRequest: { requestId: string; type: WorkerCommandType.CONNECT | WorkerCommandType.DISCONNECT } | null = null;
+  private subscriptions = new Map<string, string>(); // Map<subscriptionId, internalId>
 
   constructor() {
     this.messageManager = new MessageManager(new Session(new Transport()));
@@ -111,6 +131,12 @@ class PIApiWorker {
           }
         }
         break;
+      case WorkerCommandType.SUBSCRIBE:
+        this.handleSubscribe(command as WorkerSubscribe);
+        break;
+      case WorkerCommandType.UNSUBSCRIBE:
+        this.handleUnsubscribe(command as WorkerUnsubscribe);
+        break;
       default:
         // TODO: AI: Production code should not use console.warn - implement proper logging utility with 
         // conditional logging based on environment (strip logs in production build)
@@ -149,16 +175,80 @@ class PIApiWorker {
     self.postMessage(response);
   }
 
-  private onNotification(notification: any): void {
-    console.log('PIApiWorker: Received notification from MessageManager');
+  private onNotification(internalId: string, deserializedData: any): void {
+    console.log(`PIApiWorker: Received deserialized notification for internalId: ${internalId}`);
     
-    // Forward notification to main thread
+    // Forward deserialized notification to main thread with internalId
     const response: WorkerNotification<any> = {
-      data: notification,
-      subscriptionId: '', // Will be extracted in PiApi from notification data
+      data: deserializedData,
+      internalId: internalId,
       type: WorkerEventType.NOTIFICATION,
     };
     this.postToMainThread(response);
+  }
+
+  private handleSubscribe(command: WorkerSubscribe): void {
+    console.log(`PIApiWorker: Handling subscribe - subscriptionName: ${command.subscriptionName}, internalId: ${command.internalId}`);
+    
+    try {
+      // Get subscription class from registry
+      const createSubscription = (Subscriptions as any)[command.subscriptionName];
+      if (!createSubscription) {
+        this.postErrorReply(command.requestId, `Unknown subscription: ${command.subscriptionName}`, 'UNKNOWN_SUBSCRIPTION');
+        return;
+      }
+      
+      // Create subscription instance (no callback needed on worker side)
+      const apiSubscription = createSubscription(() => {}, () => {});
+      
+      // Create and send subscribe command
+      const subscribeCommand = apiSubscription.subscribe(command.params);
+      
+      this.messageManager.sendRequest(subscribeCommand, command.requestId, 10000)
+        .then((result: any) => {
+          // Extract subscriptionId from result
+          const subscriptionId = result.subscriptionId;
+          if (!subscriptionId) {
+            this.postErrorReply(command.requestId, 'Subscribe reply missing subscriptionId', 'INVALID_REPLY');
+            return;
+          }
+          
+          // Register subscription with MessageManager for notification routing
+          this.messageManager.registerSubscription(subscriptionId, command.internalId, apiSubscription);
+          
+          // Track subscriptionId -> internalId mapping
+          this.subscriptions.set(subscriptionId, command.internalId);
+          
+          // Send success reply with subscriptionId
+          this.postSuccessReply(command.requestId, { subscriptionId });
+        })
+        .catch((error: any) => {
+          this.postErrorReply(command.requestId, error.message, 'SUBSCRIBE_FAILED');
+        });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to create subscription';
+      this.postErrorReply(command.requestId, errorMessage, 'SUBSCRIPTION_CREATION_FAILED');
+    }
+  }
+
+  private handleUnsubscribe(command: WorkerUnsubscribe): void {
+    console.log(`PIApiWorker: Handling unsubscribe - subscriptionId: ${command.subscriptionId}`);
+    
+    const internalId = this.subscriptions.get(command.subscriptionId);
+    if (!internalId) {
+      console.warn(`PIApiWorker: Unknown subscriptionId: ${command.subscriptionId}`);
+      this.postSuccessReply(command.requestId, {}); // Still send success
+      return;
+    }
+    
+    // Unregister from MessageManager
+    this.messageManager.unregisterSubscription(command.subscriptionId);
+    
+    // Remove from local map
+    this.subscriptions.delete(command.subscriptionId);
+    
+    // Send success reply
+    this.postSuccessReply(command.requestId, {});
   }
 
   public onMessageManagerStateChange(state: IPiApiState): void {

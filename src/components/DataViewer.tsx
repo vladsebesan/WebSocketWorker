@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import type { IFlowModel, IToolboxModel } from "../interfaces/IFlow";
-import { usePiApi } from "../custom-communication/PiApi";
-import { Subscriptions, type IFlowNotificationData } from "../custom-communication/PiNotifications";
+import type { IFlowModel, IFlowUpdate, IToolboxModel } from "../interfaces/IFlow";
+import { usePiApi } from "../custom-communication/PIApi";
+import { Subscriptions } from "../custom-communication/PiNotifications";
 
 export const DataViewer = () : JSX.Element => {
   const piApi = usePiApi();
@@ -83,8 +83,8 @@ export const DataViewer = () : JSX.Element => {
       setError(null);
       
       // Create subscription with callback and error handler
-      const subscription = Subscriptions.Flow(
-        (data: IFlowNotificationData) => {
+      const subscription = Subscriptions.FlowSubscription(
+        (data: IFlowUpdate) => {
           console.log('DataViewer: Received flow notification:', data);
           setNotificationCount(prev => prev + 1);
           // TODO: Apply incremental updates to flow state

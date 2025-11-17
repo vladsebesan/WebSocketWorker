@@ -1,12 +1,19 @@
 import { NotificationMessage, NotificationT, ReplyT } from '../../generated/process-instance-message-api';
 import type { ISessionConfig, ISession, ISessionState} from './Session';
-import type { IApiCommand } from './IApiInterfaces';
+import type { IApiCommand, IApiSubscription } from './IApiInterfaces';
 
 interface IPendingRequest {
   reject: (error: Error) => void;
   resolve: (data: unknown) => void;
   timeout: NodeJS.Timeout;
   parseReply: (reply: ReplyT) => any;
+}
+
+interface IActiveSubscription {
+  subscriptionId: string;
+  internalId: string;
+  apiSubscription: IApiSubscription<any, any, any>;
+  parseNotification: (notification: NotificationT) => any;
 }
 
 export interface IMessageManagerConfig extends ISessionConfig {}
@@ -17,19 +24,22 @@ export interface IMessageManager {
   connect(config: ISessionConfig): void;
   disconnect(): void;
   sendRequest<TParams, TResult>(command: IApiCommand<TParams, TResult>, requestId: string, timeoutMs: number): Promise<TResult>;
+  registerSubscription(subscriptionId: string, internalId: string, apiSubscription: IApiSubscription<any, any, any>): void;
+  unregisterSubscription(subscriptionId: string): void;
   onConnected: (() => void) | null;
   onDisconnected: (() => void) | null;
   onStateChanged: ((state: IMessageManagerState) => void) | null;
-  onNotification: ((notification: NotificationT) => void) | null;
+  onNotification: ((internalId: string, deserializedData: any) => void) | null;
 }
 
 export class MessageManager implements IMessageManager {
   private pendingRequests = new Map<string, IPendingRequest>();
+  private subscriptions = new Map<string, IActiveSubscription>(); // Map<subscriptionId, IActiveSubscription>
   private session!: ISession;
   public onConnected: (() => void) | null = null;
   public onDisconnected: (() => void) | null = null;
   public onStateChanged: ((state: IMessageManagerState) => void) | null = null;
-  public onNotification: ((notification: NotificationT) => void) | null = null;
+  public onNotification: ((internalId: string, deserializedData: any) => void) | null = null;
 
   constructor(session: ISession) {
     this.session = session;    
@@ -111,13 +121,29 @@ export class MessageManager implements IMessageManager {
       }
     }
     else if(message instanceof NotificationT) {
-      // Forward notification to PIApiWorker via callback
+      // Deserialize notification and forward to subscription callback
       console.log(`MessageManager: Received notification of type: ${NotificationMessage[message.messageType]} with sessionId:`, message.sessionId);
       
-      if (this.onNotification) {
-        this.onNotification(message);
+      // Extract subscriptionId from notification (assuming backend includes it)
+      // For now, use sessionId as placeholder for subscriptionId
+      const subscriptionId = message.sessionId?.toString() || '';
+      
+      const subscription = this.subscriptions.get(subscriptionId);
+      if (subscription) {
+        try {
+          // Deserialize notification using subscription's deserializer
+          const deserializedData = subscription.parseNotification(message);
+          if (deserializedData && this.onNotification) {
+            // Forward deserialized data with internalId to PIApiWorker
+            this.onNotification(subscription.internalId, deserializedData);
+          } else if (!deserializedData) {
+            console.warn(`MessageManager: Failed to deserialize notification for subscription ${subscriptionId}`);
+          }
+        } catch (error) {
+          console.error(`MessageManager: Error deserializing notification for subscription ${subscriptionId}:`, error);
+        }
       } else {
-        console.warn('MessageManager: Received notification but no onNotification handler is registered');
+        console.warn(`MessageManager: Received notification for unknown subscriptionId: ${subscriptionId}`);
       }
     } else {
       console.log('MessageManager: Received unsupported message of type:', message);
@@ -141,5 +167,20 @@ export class MessageManager implements IMessageManager {
     if (this.onStateChanged) {
       this.onStateChanged(state);
     }
+  }
+
+  public registerSubscription(subscriptionId: string, internalId: string, apiSubscription: IApiSubscription<any, any, any>): void {
+    console.log(`MessageManager: Registering subscription - subscriptionId: ${subscriptionId}, internalId: ${internalId}`);
+    this.subscriptions.set(subscriptionId, {
+      subscriptionId,
+      internalId,
+      apiSubscription,
+      parseNotification: apiSubscription.deserialize.bind(apiSubscription),
+    });
+  }
+
+  public unregisterSubscription(subscriptionId: string): void {
+    console.log(`MessageManager: Unregistering subscription - subscriptionId: ${subscriptionId}`);
+    this.subscriptions.delete(subscriptionId);
   }
 }
